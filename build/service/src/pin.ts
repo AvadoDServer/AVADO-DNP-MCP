@@ -346,19 +346,23 @@ export class PinGuard {
   }
 
   /**
-   * Removes the PIN and ends every session. Only in the window after a start, once per start.
-   * The caller removes every key in the same step (see http.ts).
+   * Removes every key (`removeKeys`, first), then the PIN, and ends every session. Only in the
+   * window after a start, once per start. The keys go first and inside the same step, so no new
+   * PIN can be chosen while the owner's keys still exist, even if removing pin.json fails.
+   * Returns what `removeKeys` returned.
    */
-  reset(): Promise<void> {
+  reset<T>(removeKeys: () => Promise<T>): Promise<T> {
     return this.serial(async () => {
       if (!this.data) throw new PinError("No PIN is set, so there is nothing to reset.", 409);
       if (!this.resetUntil()) {
         throw new PinError("Resetting the PIN only works in the first 10 minutes after you restart AI Connect in the AVADO Admin. Restart it there, then try again.", 403);
       }
       this.resetUsed = true;
+      const removed = await removeKeys();
       this.data = null;
       this.sessions.clear();
       await this.save();
+      return removed;
     });
   }
 

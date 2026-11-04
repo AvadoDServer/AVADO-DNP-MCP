@@ -406,15 +406,19 @@ export function createApp(deps: AppDeps, limits: Limits): RequestListener {
 
       if (pathname === "/api/pin/reset") {
         if (req.method !== "POST") return sendError(res, 405, "Use POST for this route", { Allow: "POST" });
+        // Whoever resets the PIN gets an empty AI Connect: every key stops working at once, before
+        // the PIN is removed (so nobody can choose a new PIN while the keys still exist).
+        let removed: number;
         try {
-          await pin.reset();
+          removed = await pin.reset(async () => {
+            const n = await tokens.revokeAll();
+            approvals.dropAll();
+            return n;
+          });
         } catch (e) {
           if (e instanceof PinError) return pinError(res, e);
           throw e;
         }
-        // Whoever resets the PIN gets an empty AI Connect: every key stops working at once.
-        const removed = await tokens.revokeAll();
-        approvals.dropAll();
         activity.add({
           who: null,
           tokenId: null,

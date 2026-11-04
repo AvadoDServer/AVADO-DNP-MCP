@@ -310,8 +310,31 @@ test("the reset window closes 10 minutes after the start", async () => {
   assert.ok(g.resetUntil());
   now += 10 * 60_000;
   assert.equal(g.resetUntil(), null);
-  await assert.rejects(g.reset(), (e: PinError) => e.status === 403);
+  let called = false;
+  await assert.rejects(
+    g.reset(async () => (called = true)),
+    (e: PinError) => e.status === 403,
+  );
   assert.equal(g.isSet(), true);
+  assert.equal(called, false, "no key is removed when the reset is refused");
+});
+
+test("reset removes the keys before the PIN: if removing pin.json fails, no new PIN can reach the old keys", async () => {
+  const dir = tempDir();
+  const g = new PinGuard(path.join(dir, "pin.json"), { resetOpen: true, scryptN: TEST_SCRYPT_N });
+  await g.set(GOOD_PIN);
+  // the keys are removed while the PIN is still set
+  let pinSetDuringRemove: boolean | null = null;
+  assert.equal(await g.reset(async () => ((pinSetDuringRemove = g.isSet()), 3)), 3);
+  assert.equal(pinSetDuringRemove, true);
+  assert.equal(g.isSet(), false);
+
+  // a failing key removal leaves the PIN in place (the owner can try again after another restart)
+  const h = new PinGuard(path.join(dir, "pin2.json"), { resetOpen: true, scryptN: TEST_SCRYPT_N });
+  await h.set(GOOD_PIN);
+  await assert.rejects(h.reset(async () => Promise.reject(new Error("disk"))));
+  assert.equal(h.isSet(), true);
+  await assert.rejects(h.set("640213"), (e: PinError) => e.status === 409);
 });
 
 test("ownerRestarted: only a new container of the same version (an Admin restart) opens the reset window", async () => {
