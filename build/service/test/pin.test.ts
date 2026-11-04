@@ -7,7 +7,9 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { after, test } from "node:test";
-import { PinError, PinGuard, checkNewPin, ownerRestarted, removeKeysWithoutPin, waitAfter } from "../src/pin.js";
+import type { IncomingMessage } from "node:http";
+import { clientAddress } from "../src/http.js";
+import { PinError, PinGuard, checkNewPin, ownerRestarted, removeKeysWithoutPin, waitAfter, waitWords } from "../src/pin.js";
 import { TokenStore } from "../src/tokens.js";
 import { GOOD_PIN, TEST_SCRYPT_N, pageHeaders, servers, sessionFrom, setPin, startHttp, tempDir } from "./helpers.js";
 
@@ -176,9 +178,12 @@ test("a waiting action is only counted while locked; allowing it needs the PIN",
   assert.equal(await pending, "allowed");
 });
 
-// ---- wrong PINs: backoff ----
+// ---- wrong PINs: per device, plus a slow-down for the whole box ----
 
-test("wrong PINs: 4 free tries, then a wait that doubles up to 15 minutes; the right PIN is not checked while waiting", async () => {
+const A = "172.33.1.20";
+const B = "172.33.0.9";
+
+test("wrong PINs: 5 tries per device, then a wait that doubles from 1 minute up to 15 minutes; the right PIN is not checked while waiting", async () => {
   let now = 1_800_000_000_000;
   const file = path.join(tempDir(), "pin.json");
   const g = new PinGuard(file, { now: () => now, scryptN: TEST_SCRYPT_N });
@@ -186,51 +191,179 @@ test("wrong PINs: 4 free tries, then a wait that doubles up to 15 minutes; the r
   await g.set(GOOD_PIN);
 
   for (let i = 1; i <= 4; i++) {
-    await assert.rejects(g.unlock("000001"), (e: PinError) => e.status === 401 && e.wrong && /not right/.test(e.message));
+    await assert.rejects(g.unlock("000001", A), (e: PinError) => e.status === 401 && e.wrong && /not right/.test(e.message));
   }
-  await assert.rejects(g.unlock("000001"), (e: PinError) => e.status === 429 && e.retryAfter === 30);
+  await assert.rejects(
+    g.unlock("000001", A),
+    (e: PinError) => e.status === 429 && e.retryAfter === 60 && e.message === "That PIN is not right. Too many wrong PINs from this device. Try again in 60 seconds.",
+  );
   // while waiting, even the right PIN is not looked at
-  await assert.rejects(g.unlock(GOOD_PIN), (e: PinError) => e.status === 429 && !e.wrong && /Wait/.test(e.message));
-  now += 29_000;
-  await assert.rejects(g.unlock(GOOD_PIN), (e: PinError) => e.status === 429);
+  await assert.rejects(g.unlock(GOOD_PIN, A), (e: PinError) => e.status === 429 && !e.wrong && /from this device/.test(e.message));
+  now += 59_000;
+  await assert.rejects(g.unlock(GOOD_PIN, A), (e: PinError) => e.status === 429);
   now += 1_000;
   // the next wrong try doubles the wait
-  await assert.rejects(g.unlock("000001"), (e: PinError) => e.status === 429 && e.retryAfter === 60);
+  await assert.rejects(g.unlock("000001", A), (e: PinError) => e.status === 429 && e.retryAfter === 120 && /Try again in 2 minutes\./.test(e.message));
 
   // a restart does not forget the count
   const again = new PinGuard(file, { now: () => now, scryptN: TEST_SCRYPT_N });
   assert.equal(await again.load(), "ok");
-  assert.equal(again.retryAfter(), 60);
-  now += 60_000;
-  const id = await again.unlock(GOOD_PIN);
+  assert.equal(again.retryAfter(A), 120);
+  now += 120_000;
+  const id = await again.unlock(GOOD_PIN, A);
   assert.ok(id.length > 30);
-  assert.equal(again.retryAfter(), 0);
-  // a right PIN starts the count again
-  await assert.rejects(again.unlock("000001"), (e: PinError) => e.status === 401);
+  assert.equal(again.retryAfter(A), 0);
+  // a right PIN starts that device's count again
+  await assert.rejects(again.unlock("000001", A), (e: PinError) => e.status === 401 && /4 tries left/.test(e.message));
 
-  assert.deepEqual([4, 5, 6, 7, 8, 9, 10, 20].map(waitAfter), [0, 30_000, 60_000, 120_000, 240_000, 480_000, 900_000, 900_000]);
+  assert.deepEqual([4, 5, 6, 7, 8, 9, 10, 20].map(waitAfter), [0, 60_000, 120_000, 240_000, 480_000, 900_000, 900_000, 900_000]);
 });
 
-test("wrong PINs over HTTP: 401, then 429 with Retry-After, counted for the whole box, and listed in the activity", async () => {
+test("one device that keeps guessing never locks the owner's other devices out", async () => {
+  let now = 1_800_000_000_000;
+  const g = new PinGuard(path.join(tempDir(), "pin.json"), { now: () => now, scryptN: TEST_SCRYPT_N, boxDelayMs: 1 });
+  await g.set(GOOD_PIN);
+  // a stranger guesses for hours
+  for (let i = 0; i < 12; i++) {
+    await g.unlock("000001", A).catch(() => {});
+    now += 16 * 60_000;
+  }
+  await assert.rejects(g.unlock("000001", A), (e: PinError) => e.status === 429);
+  assert.equal(g.retryAfter(A), 900);
+  // the owner on another device is not held up at all
+  assert.equal(g.retryAfter(B), 0);
+  assert.ok((await g.unlock(GOOD_PIN, B)).length > 30);
+  // and has the full 5 tries
+  for (let i = 0; i < 4; i++) await assert.rejects(g.unlock("000002", B), (e: PinError) => e.status === 401);
+  assert.ok((await g.unlock(GOOD_PIN, B)).length > 30);
+});
+
+test("more than 20 wrong PINs in an hour slow every try down by a few seconds, but never close the page", async () => {
+  let now = 1_800_000_000_000;
+  const file = path.join(tempDir(), "pin.json");
+  const g = new PinGuard(file, { now: () => now, scryptN: TEST_SCRYPT_N, boxDelayMs: 300 });
+  await g.set(GOOD_PIN);
+  // 20 wrong PINs from 20 addresses: not slow yet
+  for (let i = 0; i < 20; i++) await assert.rejects(g.unlock("000001", `10.0.0.${i}`), (e: PinError) => e.status === 401);
+  assert.equal(g.slow(), false);
+  let t = Date.now();
+  await assert.rejects(g.unlock("000001", "10.0.1.1"), (e: PinError) => e.status === 401);
+  assert.ok(Date.now() - t < 250, "the 21st try is not slowed yet");
+  assert.equal(g.slow(), true);
+
+  // now every try waits, from any device, right or wrong, and none is refused for it
+  t = Date.now();
+  await assert.rejects(g.unlock("000001", "10.0.1.2"), (e: PinError) => e.status === 401);
+  assert.ok(Date.now() - t >= 280, "a wrong try waits");
+  t = Date.now();
+  assert.ok((await g.unlock(GOOD_PIN, B)).length > 30);
+  assert.ok(Date.now() - t >= 280, "the right PIN waits too");
+
+  // devices wait side by side, not one after the other: 6 devices at once take about one delay
+  t = Date.now();
+  const codes = await Promise.all(Array.from({ length: 6 }, (_, i) => g.unlock(i === 0 ? GOOD_PIN : "000001", `10.0.2.${i}`).then(() => 200, (e: PinError) => e.status)));
+  assert.deepEqual(codes, [200, 401, 401, 401, 401, 401]);
+  assert.ok(Date.now() - t < 1_200, `took ${Date.now() - t} ms`);
+
+  // kept across a restart, and it ends an hour after the wrong PINs
+  const again = new PinGuard(file, { now: () => now, scryptN: TEST_SCRYPT_N, boxDelayMs: 300 });
+  await again.load();
+  assert.equal(again.slow(), true);
+  now += 61 * 60_000;
+  assert.equal(again.slow(), false);
+  t = Date.now();
+  assert.ok((await again.unlock(GOOD_PIN, B)).length > 30);
+  assert.ok(Date.now() - t < 250);
+});
+
+test("an old pin.json with the earlier box-wide count still loads, without the old wait", async () => {
+  const now = 1_800_000_000_000;
+  const file = path.join(tempDir(), "pin.json");
+  const g = new PinGuard(file, { now: () => now, scryptN: TEST_SCRYPT_N });
+  await g.set(GOOD_PIN);
+  const d = JSON.parse(readFileSync(file, "utf8")) as Record<string, unknown>;
+  delete d.devices;
+  delete d.recentWrong;
+  writeFileSync(file, JSON.stringify({ ...d, failures: 9, lockedUntil: now + 600_000 }));
+  const old = new PinGuard(file, { now: () => now, scryptN: TEST_SCRYPT_N });
+  assert.equal(await old.load(), "ok");
+  assert.equal(old.retryAfter(A), 0);
+  assert.ok((await old.unlock(GOOD_PIN, A)).length > 30);
+});
+
+test("wrong PINs over HTTP: 401, then 429 with Retry-After for this device, and listed in the activity", async () => {
   const { main, w } = await startHttp();
   await setPin(main);
   const codes: number[] = [];
-  for (let i = 0; i < 6; i++) codes.push((await post(main, "/api/pin/unlock", { pin: "000001" })).status);
-  assert.deepEqual(codes, [401, 401, 401, 401, 429, 429]);
+  for (let i = 0; i < 7; i++) codes.push((await post(main, "/api/pin/unlock", { pin: "000001" })).status);
+  assert.deepEqual(codes, [401, 401, 401, 401, 429, 429, 429]);
   const r = await post(main, "/api/pin/unlock", { pin: GOOD_PIN });
   assert.equal(r.status, 429);
+  assert.equal(((await r.json()) as { error: string }).error, "Too many wrong PINs from this device. Try again in 60 seconds.");
   assert.ok(Number(r.headers.get("retry-after")) > 0);
   assert.equal(r.headers.get("set-cookie"), null);
   assert.equal((await state(main)).pin.retryAfter > 0, true);
   assert.equal(w.activity.list().filter((e) => e.tool === "wrong pin").length, 5);
 });
 
-test("parallel guesses are checked one at a time", async () => {
+test("a made-up X-Forwarded-For header does not make a new device; it counts only from a trusted proxy", async () => {
+  const { main, w } = await startHttp();
+  await setPin(main);
+  const as = (ip: string, pin: string) =>
+    fetch(`${main}/api/pin/unlock`, { method: "POST", headers: { ...pageHeaders, "X-Forwarded-For": ip }, body: JSON.stringify({ pin }) }).then((r) => r.status);
+  // no proxy is trusted (the AVADO default): every made-up address is still this one device
+  const codes: number[] = [];
+  for (let i = 0; i < 6; i++) codes.push(await as(`10.9.9.${i}`, "000001"));
+  assert.deepEqual(codes, [401, 401, 401, 401, 429, 429]);
+
+  // with 127.0.0.1 as a trusted proxy, the header names the device
+  w.config.trustedProxies = ["127.0.0.1"];
+  assert.equal(await as("10.9.9.50", GOOD_PIN), 200);
+  for (let i = 0; i < 4; i++) assert.equal(await as("10.9.9.51", "000001"), 401);
+  assert.equal(await as("10.9.9.51", "000001"), 429);
+  assert.equal(await as("10.9.9.52", GOOD_PIN), 200);
+  // without the header the proxy itself is the device, and it is still waiting
+  assert.equal((await post(main, "/api/pin/unlock", { pin: GOOD_PIN })).status, 429);
+});
+
+test("clientAddress: the connection's address, or the X-Forwarded-For hop just before the trusted proxies", () => {
+  const req = (remote: string, xff?: string | string[]) => ({ socket: { remoteAddress: remote }, headers: xff === undefined ? {} : { "x-forwarded-for": xff } }) as unknown as IncomingMessage;
+  assert.equal(clientAddress(req("::ffff:172.33.1.20")), "172.33.1.20");
+  assert.equal(clientAddress(req("172.33.1.20", "1.2.3.4")), "172.33.1.20");
+  assert.equal(clientAddress(req("172.33.1.20", "1.2.3.4"), ["172.33.0.5"]), "172.33.1.20");
+  const proxy = ["172.33.0.5"];
+  assert.equal(clientAddress(req("172.33.0.5", "1.2.3.4"), proxy), "1.2.3.4");
+  // the client can put anything in front; only the hop the proxy added counts
+  assert.equal(clientAddress(req("172.33.0.5", "9.9.9.9, 1.2.3.4"), proxy), "1.2.3.4");
+  assert.equal(clientAddress(req("172.33.0.5", ["9.9.9.9", "1.2.3.4"]), proxy), "1.2.3.4");
+  assert.equal(clientAddress(req("172.33.0.5", "1.2.3.4, 172.33.0.5"), proxy), "1.2.3.4");
+  assert.equal(clientAddress(req("172.33.0.5", "not-an-ip"), proxy), "172.33.0.5");
+  assert.equal(clientAddress(req("172.33.0.5"), proxy), "172.33.0.5");
+});
+
+test("waitWords: plain words, as the page shows them", () => {
+  assert.equal(waitWords(240), "Too many wrong PINs from this device. Try again in 4 minutes.");
+  assert.equal(waitWords(61), "Too many wrong PINs from this device. Try again in 2 minutes.");
+  assert.equal(waitWords(60), "Too many wrong PINs from this device. Try again in 60 seconds.");
+  assert.equal(waitWords(1), "Too many wrong PINs from this device. Try again in 1 second.");
+  assert.equal(waitWords(900), "Too many wrong PINs from this device. Try again in 15 minutes.");
+});
+
+test("parallel guesses from one device are checked one at a time", async () => {
   const { main } = await startHttp();
   await setPin(main);
   const codes = await Promise.all(Array.from({ length: 12 }, () => post(main, "/api/pin/unlock", { pin: "000001" }).then((r) => r.status)));
   assert.equal(codes.filter((c) => c === 401).length, 4);
   assert.equal(codes.filter((c) => c === 429).length, 8);
+});
+
+test("the agent-only port tells the Tailscale relay what it is, without a key and without anything private", async () => {
+  const { agent, main } = await startHttp();
+  const r = await fetch(`${agent}/identity`);
+  assert.equal(r.status, 200);
+  assert.deepEqual(await r.json(), { name: "mcp.avado.dnp.dappnode.eth", version: "0.1.0" });
+  assert.equal((await fetch(`${agent}/identity`, { method: "POST" })).status, 404);
+  assert.equal((await fetch(`${main}/identity`)).status, 404);
 });
 
 // ---- sessions are short ----
@@ -244,7 +377,7 @@ test("a session ends after 10 minutes without a click or 30 minutes at most; the
   now += 2 * 60_000;
   assert.equal(g.check(cookie), false); // 11 minutes without a click
 
-  const c2 = `aic_session=${await g.unlock(GOOD_PIN)}`;
+  const c2 = `aic_session=${await g.unlock(GOOD_PIN, A)}`;
   for (let i = 0; i < 5; i++) {
     now += 6 * 60_000;
     assert.equal(g.check(c2), true, `click ${i}`);

@@ -7,9 +7,13 @@
  * - Entering it gives a session cookie: random 256 bits, only its SHA-256 kept, in memory only (a
  *   restart locks the page). HttpOnly, SameSite=Strict, Path=/api, Secure over https, 30 minutes at
  *   most and 10 minutes without use.
- * - Wrong PINs: 4 tries free, then a wait that doubles from 30 seconds up to 15 minutes. Counted for
- *   the whole box (not per address) and kept on disk, so neither many devices nor a restart help a
- *   guesser. Tries are checked one at a time.
+ * - Wrong PINs are counted per device (the address the request comes from; see clientAddress in
+ *   http.ts): 5 tries, then a wait that doubles from 1 minute up to 15 minutes. So one device that
+ *   keeps guessing never locks the owner's other devices out. On top of that, the whole box: after
+ *   more than 20 wrong PINs in an hour, every try (right or wrong, from any device) waits 3 seconds
+ *   before it is checked. That slows down guessing from many addresses but never closes the page.
+ *   Both counts are kept on disk, so a restart does not help a guesser. Tries from one device are
+ *   checked one at a time; at most two PINs are hashed at once for the whole box.
  * - Forgot PIN: for 10 minutes after the owner presses Restart for AI Connect in the AVADO Admin,
  *   the page offers "Reset the PIN". That removes the PIN and every connection's key, so whoever
  *   resets it gets an empty AI Connect, never the owner's assistants. Only an Admin restart opens
@@ -28,10 +32,19 @@ export const SESSION_COOKIE = "aic_session";
 export const SESSION_MAX_MS = 30 * 60_000;
 export const SESSION_IDLE_MS = 10 * 60_000;
 export const RESET_WINDOW_MS = 10 * 60_000;
-export const FREE_TRIES = 4;
-export const FIRST_WAIT_MS = 30_000;
+/** Wrong PINs one device may enter before it has to wait. */
+export const FREE_TRIES = 5;
+export const FIRST_WAIT_MS = 60_000;
 export const MAX_WAIT_MS = 15 * 60_000;
+/** More than this many wrong PINs in BOX_WINDOW_MS (all devices together) slows every try down. */
+export const BOX_SLOW_AFTER = 20;
+export const BOX_WINDOW_MS = 60 * 60_000;
+export const BOX_DELAY_MS = 3_000;
 const MAX_SESSIONS = 20;
+/** Devices remembered in pin.json; the oldest are forgotten first. */
+const MAX_DEVICES = 500;
+/** PIN hashes running at once (32 MiB each). */
+const MAX_HASHING = 2;
 
 /** scrypt cost: N=2^15, r=8 -> 32 MiB and about 50-100 ms per try on a box. */
 const SCRYPT = { N: 32768, r: 8, p: 1, keylen: 32 };
@@ -57,10 +70,18 @@ interface PinFile {
   r: number;
   p: number;
   setAt: string;
-  /** wrong tries since the last right one */
+  /** wrong tries per device (client address) since that device's last right one */
+  devices: Record<string, DeviceTries>;
+  /** epoch ms of each wrong PIN in the last hour, from any device */
+  recentWrong: number[];
+}
+
+interface DeviceTries {
   failures: number;
-  /** epoch ms; no try is checked before this */
+  /** epoch ms; no try from this device is checked before this */
   lockedUntil: number;
+  /** epoch ms of the last wrong try */
+  last: number;
 }
 
 interface Session {
@@ -88,11 +109,26 @@ export function checkNewPin(raw: unknown): string {
   return pin;
 }
 
-/** The wait after `failures` wrong tries in a row, in ms (0 = none). */
+/** The wait after `failures` wrong tries in a row from one device, in ms (0 = none). */
 export function waitAfter(failures: number): number {
-  if (failures < FREE_TRIES + 1) return 0;
-  return Math.min(MAX_WAIT_MS, FIRST_WAIT_MS * 2 ** (failures - FREE_TRIES - 1));
+  if (failures < FREE_TRIES) return 0;
+  return Math.min(MAX_WAIT_MS, FIRST_WAIT_MS * 2 ** (failures - FREE_TRIES));
 }
+
+function readDevices(raw: unknown): Record<string, DeviceTries> {
+  const out: Record<string, DeviceTries> = {};
+  if (!raw || typeof raw !== "object") return out;
+  const num = (x: unknown) => (typeof x === "number" && Number.isFinite(x) && x >= 0 ? x : 0);
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (k.length > 64 || !v || typeof v !== "object") continue;
+    const d = v as Record<string, unknown>;
+    const failures = Number.isInteger(d.failures) && (d.failures as number) > 0 ? (d.failures as number) : 0;
+    if (failures) out[k] = { failures, lockedUntil: num(d.lockedUntil), last: num(d.last) };
+  }
+  return out;
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export function parseCookies(header: string | undefined): Record<string, string> {
   const out: Record<string, string> = {};
@@ -149,12 +185,19 @@ export interface PinOptions {
   sessionIdleMs?: number;
   /** lower scrypt cost, for tests only */
   scryptN?: number;
+  /** the box-wide slow-down per try (default 3 s), shorter in tests */
+  boxDelayMs?: number;
 }
 
 export class PinGuard {
   private data: PinFile | null = null;
   private sessions = new Map<string, Session>();
   private queue: Promise<unknown> = Promise.resolve();
+  /** one PIN check at a time per device */
+  private deviceQueues = new Map<string, Promise<unknown>>();
+  private hashing = 0;
+  private hashWaiters: Array<() => void> = [];
+  private readonly boxDelayMs: number;
   private resetUsed = false;
   private readonly resetOpen: boolean;
   private readonly now: () => number;
@@ -175,6 +218,7 @@ export class PinGuard {
     this.sessionMaxMs = opts.sessionMaxMs ?? SESSION_MAX_MS;
     this.sessionIdleMs = opts.sessionIdleMs ?? SESSION_IDLE_MS;
     this.scryptN = opts.scryptN ?? SCRYPT.N;
+    this.boxDelayMs = opts.boxDelayMs ?? BOX_DELAY_MS;
   }
 
   /**
@@ -203,8 +247,8 @@ export class PinGuard {
           r: d.r!,
           p: d.p!,
           setAt: typeof d.setAt === "string" ? d.setAt : new Date(0).toISOString(),
-          failures: Number.isInteger(d.failures) && d.failures! > 0 ? d.failures! : 0,
-          lockedUntil: typeof d.lockedUntil === "number" && Number.isFinite(d.lockedUntil) ? d.lockedUntil : 0,
+          devices: readDevices(d.devices),
+          recentWrong: Array.isArray(d.recentWrong) ? d.recentWrong.filter((t): t is number => typeof t === "number" && Number.isFinite(t)).slice(-200) : [],
         };
         return "ok";
       }
@@ -227,6 +271,49 @@ export class PinGuard {
     return run;
   }
 
+  /** Runs one PIN check at a time per device, so parallel guesses from it are counted one by one. */
+  private perDevice<T>(client: string, fn: () => Promise<T>): Promise<T> {
+    const prev = this.deviceQueues.get(client) ?? Promise.resolve();
+    const run = prev.then(fn, fn);
+    const tail = run.catch(() => {});
+    this.deviceQueues.set(client, tail);
+    void tail.then(() => {
+      if (this.deviceQueues.get(client) === tail) this.deviceQueues.delete(client);
+    });
+    return run;
+  }
+
+  /** scrypt with at most MAX_HASHING running at once (each takes 32 MiB). */
+  private async hash(pin: string, salt: Buffer, keylen: number, opts: ScryptOptions): Promise<Buffer> {
+    while (this.hashing >= MAX_HASHING) await new Promise<void>((r) => this.hashWaiters.push(r));
+    this.hashing += 1;
+    try {
+      return await scrypt(pin, salt, keylen, opts);
+    } finally {
+      this.hashing -= 1;
+      this.hashWaiters.shift()?.();
+    }
+  }
+
+  private prune(d: PinFile): void {
+    const from = this.now() - BOX_WINDOW_MS;
+    d.recentWrong = d.recentWrong.filter((t) => t > from).slice(-200);
+    const day = this.now() - 24 * 60 * 60_000;
+    for (const [k, v] of Object.entries(d.devices)) if (v.lockedUntil <= this.now() && v.last < day) delete d.devices[k];
+    const keys = Object.keys(d.devices);
+    if (keys.length > MAX_DEVICES) {
+      keys.sort((a, b) => d.devices[a]!.last - d.devices[b]!.last);
+      for (const k of keys.slice(0, keys.length - MAX_DEVICES)) delete d.devices[k];
+    }
+  }
+
+  /** Whether more than BOX_SLOW_AFTER wrong PINs came in the last hour (every try then waits). */
+  slow(): boolean {
+    if (!this.data) return false;
+    const from = this.now() - BOX_WINDOW_MS;
+    return this.data.recentWrong.filter((t) => t > from).length > BOX_SLOW_AFTER;
+  }
+
   private async save(): Promise<void> {
     if (!this.file) return;
     if (!this.data) {
@@ -236,10 +323,11 @@ export class PinGuard {
     await writeFileAtomic(this.file, JSON.stringify(this.data), 0o600);
   }
 
-  /** Seconds to wait before the next try is checked (0 = may try now). */
-  retryAfter(): number {
-    if (!this.data) return 0;
-    const ms = this.data.lockedUntil - this.now();
+  /** Seconds this device must wait before its next try is checked (0 = may try now). */
+  retryAfter(client: string): number {
+    const dev = this.data?.devices[client];
+    if (!dev) return 0;
+    const ms = dev.lockedUntil - this.now();
     return ms > 0 ? Math.ceil(ms / 1000) : 0;
   }
 
@@ -250,7 +338,7 @@ export class PinGuard {
       const pin = checkNewPin(raw);
       const salt = randomBytes(16);
       const opts = { N: this.scryptN, r: SCRYPT.r, p: SCRYPT.p, maxmem: 64 * 1024 * 1024 };
-      const hash = await scrypt(pin, salt, SCRYPT.keylen, opts);
+      const hash = await this.hash(pin, salt, SCRYPT.keylen, opts);
       this.data = {
         v: 1,
         salt: salt.toString("base64"),
@@ -259,42 +347,55 @@ export class PinGuard {
         r: opts.r,
         p: opts.p,
         setAt: new Date(this.now()).toISOString(),
-        failures: 0,
-        lockedUntil: 0,
+        devices: {},
+        recentWrong: [],
       };
       await this.save();
       return this.newSession();
     });
   }
 
-  /** Checks a PIN. Right: a session id. Wrong or waiting: PinError (401 / 429). */
-  unlock(raw: unknown): Promise<string> {
-    return this.serial(async () => {
+  /**
+   * Checks a PIN from one device (`client`, its address). Right: a session id. Wrong or waiting:
+   * PinError (401 / 429).
+   */
+  unlock(raw: unknown, client: string): Promise<string> {
+    return this.perDevice(client, async () => {
+      if (!this.data) throw new PinError("No PIN is set yet. Choose one first.", 409);
+      const wait = this.retryAfter(client);
+      if (wait > 0) throw new PinError(waitWords(wait), 429, wait);
+      // many wrong PINs on the whole box: every try is slowed down, none is refused
+      if (this.slow()) await sleep(this.boxDelayMs);
       const d = this.data;
       if (!d) throw new PinError("No PIN is set yet. Choose one first.", 409);
-      const wait = this.retryAfter();
-      if (wait > 0) throw new PinError(waitWords(wait), 429, wait);
       const pin = typeof raw === "string" ? raw.trim() : "";
       let ok = false;
       if (/^[0-9]{1,32}$/.test(pin)) {
         const want = Buffer.from(d.hash, "base64");
-        const got = await scrypt(pin, Buffer.from(d.salt, "base64"), want.length, { N: d.N, r: d.r, p: d.p, maxmem: 64 * 1024 * 1024 });
+        const got = await this.hash(pin, Buffer.from(d.salt, "base64"), want.length, { N: d.N, r: d.r, p: d.p, maxmem: 64 * 1024 * 1024 });
         ok = got.length === want.length && timingSafeEqual(got, want);
       }
+      // a reset may have removed the PIN while this one was being checked
+      if (this.data !== d) throw new PinError("No PIN is set yet. Choose one first.", 409);
       if (ok) {
-        if (d.failures || d.lockedUntil) {
-          d.failures = 0;
-          d.lockedUntil = 0;
+        if (d.devices[client]) {
+          delete d.devices[client];
           await this.save();
         }
         return this.newSession();
       }
-      d.failures += 1;
-      const ms = waitAfter(d.failures);
-      d.lockedUntil = ms ? this.now() + ms : 0;
+      const t = this.now();
+      const dev = (d.devices[client] ??= { failures: 0, lockedUntil: 0, last: t });
+      dev.failures += 1;
+      dev.last = t;
+      const ms = waitAfter(dev.failures);
+      dev.lockedUntil = ms ? t + ms : 0;
+      d.recentWrong.push(t);
+      this.prune(d);
       await this.save();
       if (ms) throw new PinError(`That PIN is not right. ${waitWords(Math.ceil(ms / 1000))}`, 429, Math.ceil(ms / 1000), true);
-      throw new PinError("That PIN is not right. Please try again.", 401, undefined, true);
+      const left = FREE_TRIES - dev.failures;
+      throw new PinError(`That PIN is not right. ${left === 1 ? "1 try left" : `${left} tries left`}.`, 401, undefined, true);
     });
   }
 
@@ -391,8 +492,9 @@ export async function removeKeysWithoutPin(pin: PinGuard, tokens: { list(): unkn
   return n;
 }
 
+/** "Too many wrong PINs from this device. Try again in 4 minutes." (the page uses the same words) */
 export function waitWords(seconds: number): string {
-  if (seconds < 90) return `Too many wrong tries. Wait ${seconds} seconds, then try again.`;
   const m = Math.ceil(seconds / 60);
-  return `Too many wrong tries. Wait ${m} minutes, then try again.`;
+  const when = seconds <= 60 ? (seconds === 1 ? "1 second" : `${seconds} seconds`) : m === 1 ? "1 minute" : `${m} minutes`;
+  return `Too many wrong PINs from this device. Try again in ${when}.`;
 }

@@ -357,6 +357,13 @@
         : "Secure connection (https) is not ready yet: the box could not download the my.ava.do certificate. Until then use http://mcp.my.ava.do/mcp.";
   }
 
+  // the same words as waitWords in src/pin.ts
+  function waitWords(seconds) {
+    var m = Math.ceil(seconds / 60);
+    var when = seconds <= 60 ? (seconds === 1 ? "1 second" : seconds + " seconds") : m === 1 ? "1 minute" : m + " minutes";
+    return "Too many wrong PINs from this device. Try again in " + when + ".";
+  }
+
   function renderPin() {
     var p = state.pin || { set: false, unlocked: false };
     var unlocked = !!p.unlocked;
@@ -379,8 +386,9 @@
       waiting === 1 ? "Your assistant is waiting for your OK. Enter your PIN to see what it wants to do." : waiting + " requests from your assistants wait for your OK. Enter your PIN to see them.";
     var wait = p.retryAfter || 0;
     $("pin-enter-button").disabled = wait > 0;
-    if (wait > 0) $("pin-enter-msg").textContent = wait < 90 ? "Too many wrong tries. Wait " + wait + " seconds." : "Too many wrong tries. Wait " + Math.ceil(wait / 60) + " minutes.";
-    else if (/^Too many/.test($("pin-enter-msg").textContent)) $("pin-enter-msg").textContent = "";
+    if (wait > 0) $("pin-enter-msg").textContent = waitWords(wait);
+    else if (/Too many wrong PINs/.test($("pin-enter-msg").textContent)) $("pin-enter-msg").textContent = "";
+    $("pin-slow").hidden = !p.slow;
     $("pin-reset-open").hidden = !p.resetUntil;
     $("pin-reset-closed").hidden = !!p.resetUntil;
     if (p.resetUntil) {

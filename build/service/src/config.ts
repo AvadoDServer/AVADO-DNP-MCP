@@ -32,6 +32,11 @@ export interface Config {
   containerMarker: string;
   publicDir: string;
   allowedHostnames: string[];
+  /**
+   * Proxies whose X-Forwarded-For header counts for the wrong-PIN limit (see clientAddress in
+   * http.ts). Empty: nothing on an AVADO proxies the page, so the header is never trusted.
+   */
+  trustedProxies: string[];
   /** Origins a browser-based MCP client may call /mcp from (all others are refused, MCP spec). */
   allowedOrigins: string[];
   /** How long an action that needs the owner's OK waits for a click on the page. */
@@ -102,6 +107,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     containerMarker: env.CONTAINER_MARKER || "/tmp/ai-connect-container",
     publicDir: env.PUBLIC_DIR || new URL("../public", import.meta.url).pathname,
     allowedHostnames: [...DEFAULT_ALLOWED_HOSTNAMES, ...list(env, "EXTRA_ALLOWED_HOSTNAMES")],
+    trustedProxies: [],
     allowedOrigins: ["http://mcp.my.ava.do", "https://mcp.my.ava.do", ...list(env, "EXTRA_ALLOWED_ORIGINS")],
     approvalTimeoutMs: num(env, "APPROVAL_TIMEOUT_MS", 120_000),
     installWaitMs: num(env, "INSTALL_WAIT_MS", 45_000),

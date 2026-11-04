@@ -76,9 +76,19 @@ resets, reboots, core (system) installs/updates/restarts, installs by IPFS hash 
   locks the page), `HttpOnly; SameSite=Strict; Path=/api`, `Secure` over HTTPS; ends 10 minutes
   after the last click or 30 minutes after the PIN at most (the page's own 5-second refresh does
   not keep it alive). "Lock the page" ends it at once. CSRF checks still apply to every PIN route.
-- Wrong PINs: 4 free tries, then a wait of 30 s that doubles up to 15 min; counted for the whole
-  box (not per address, so many devices do not help) and kept in `pin.json` (a restart does not
-  help either); tries are checked one at a time; each wrong PIN is listed in the activity.
+- Wrong PINs, per device: 5 tries, then a wait of 1 minute that doubles up to 15 minutes ("Too
+  many wrong PINs from this device. Try again in 4 minutes."). A device is the address the
+  connection comes from. X-Forwarded-For counts only from a trusted proxy, and none is trusted on
+  an AVADO: ZeroTier Remote Access, the AVADO Wi-Fi and Tailscale pass connections on at the
+  network level without that header, each under its own address on the AVADO network. So all
+  devices that come in through one of them share one count, but a guesser on one way in (or an
+  app on the box) cannot lock the owner out of the others.
+- Wrong PINs, whole box: after more than 20 wrong PINs in an hour, every try from any device
+  waits 3 seconds before it is checked (the page says so). Slower guessing from many addresses;
+  the page is never closed.
+- Both counts are kept in `pin.json` (a restart does not help a guesser). Tries from one device
+  are checked one at a time, at most two PIN hashes run at once; each wrong PIN is listed in the
+  activity.
 - Forgot PIN: the owner presses **Restart** for AI Connect in the AVADO Admin and comes back within
   10 minutes; the page then offers "Reset the PIN". The reset removes **every key** (and declines
   waiting actions), so whoever resets the PIN gets an empty AI Connect, never the owner's

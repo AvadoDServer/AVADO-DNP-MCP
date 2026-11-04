@@ -1,5 +1,6 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import type { IncomingMessage, RequestListener, ServerResponse } from "node:http";
+import { isIP } from "node:net";
 import path from "node:path";
 import type { TLSSocket } from "node:tls";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
@@ -167,9 +168,37 @@ function bearer(req: IncomingMessage): string | null {
   return m ? m[1]! : null;
 }
 
-function clientAddress(req: IncomingMessage): string {
-  return req.socket.remoteAddress ?? "unknown";
+const plainAddress = (a: string) => (a.startsWith("::ffff:") && isIP(a.slice(7)) === 4 ? a.slice(7) : a);
+
+/**
+ * The device a request comes from, for the wrong-PIN count: the address of the connection. The
+ * X-Forwarded-For header is used only when the connection comes from one of `trustedProxies`
+ * (the rightmost address in it that is not itself a trusted proxy); otherwise any device could
+ * send a made-up header and pass for another device.
+ *
+ * On an AVADO no proxy sits in front of the page today, so the list is empty: ZeroTier Remote
+ * Access, the AVADO Wi-Fi and Tailscale pass connections on at the network level (each under its
+ * own address on the AVADO network, without the header). All devices behind one of those share
+ * one count; devices on different ways in, and other apps on the box, do not.
+ */
+export function clientAddress(req: IncomingMessage, trustedProxies: readonly string[] = []): string {
+  const remote = plainAddress(req.socket.remoteAddress ?? "unknown");
+  if (!trustedProxies.includes(remote)) return remote;
+  const header = req.headers["x-forwarded-for"];
+  const raw = Array.isArray(header) ? header.join(",") : header;
+  if (!raw) return remote;
+  const hops = raw.split(",").map((h) => plainAddress(h.trim()));
+  for (let i = hops.length - 1; i >= 0; i--) {
+    const hop = hops[i]!;
+    if (!isIP(hop)) return remote;
+    if (!trustedProxies.includes(hop)) return hop;
+  }
+  return remote;
 }
+
+/** What the agent-only port says about itself, so the Tailscale relay can check it reached AI Connect. */
+export const IDENTITY_PATH = "/identity";
+export const PACKAGE_NAME = "mcp.avado.dnp.dappnode.eth";
 
 /** The MCP endpoint, shared by the main and the agent-only listener. */
 export async function handleMcp(req: IncomingMessage, res: ServerResponse, pathKey: string | null, deps: AppDeps, limits: Limits): Promise<void> {
@@ -279,6 +308,11 @@ export function createAgentApp(deps: AppDeps, limits: Limits): RequestListener {
   return (req, res) => {
     void (async () => {
       const pathname = new URL(req.url ?? "/", "http://localhost").pathname;
+      // No key and nothing private: a fixed name and the version. The Tailscale relay asks this
+      // first, so it never sends an assistant's key to another app that took over the address.
+      if (pathname === IDENTITY_PATH && (req.method === "GET" || req.method === "HEAD")) {
+        return sendJson(res, 200, { name: PACKAGE_NAME, version: deps.config.version });
+      }
       const mcp = parseMcpPath(pathname);
       if (!mcp.match) {
         res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8", "X-Content-Type-Options": "nosniff" });
@@ -299,11 +333,14 @@ export function createApp(deps: AppDeps, limits: Limits): RequestListener {
   const { config, logger, tokens, activity, approvals, box, pin } = deps;
   const files = loadStaticFiles(config.publicDir);
 
-  const pinState = (cookie: string | undefined, unlocked: boolean) => ({
+  const pinState = (cookie: string | undefined, unlocked: boolean, client: string) => ({
     set: pin.isSet(),
     unlocked,
     expiresAt: unlocked ? pin.expiresAt(cookie) : null,
-    retryAfter: pin.retryAfter(),
+    // for this device only
+    retryAfter: pin.retryAfter(client),
+    // many wrong PINs on the box in the last hour: each try takes a few seconds
+    slow: pin.slow(),
     resetUntil: pin.resetUntil(),
   });
 
@@ -357,6 +394,7 @@ export function createApp(deps: AppDeps, limits: Limits): RequestListener {
 
       const cookie = req.headers.cookie;
       const secure = (req.socket as TLSSocket).encrypted === true;
+      const client = clientAddress(req, config.trustedProxies);
 
       if (pathname === "/api/state") {
         if (!isSafeMethod(req.method)) return sendError(res, 405, "Use GET for this route", { Allow: "GET" });
@@ -367,7 +405,7 @@ export function createApp(deps: AppDeps, limits: Limits): RequestListener {
           version: config.version,
           https: deps.httpsInfo(),
           tailscale: tsInfo,
-          pin: pinState(cookie, unlocked),
+          pin: pinState(cookie, unlocked, client),
         };
         // Locked (or no PIN yet): no connections, no activity, no waiting actions; only how many wait.
         if (!unlocked) return sendJson(res, 200, { ...open, waiting: approvals.list().length });
@@ -386,7 +424,7 @@ export function createApp(deps: AppDeps, limits: Limits): RequestListener {
         const body = await readJson(req).catch(() => ({}) as Record<string, unknown>);
         const first = pathname === "/api/pin/set";
         try {
-          const id = first ? await pin.set(body.pin) : await pin.unlock(body.pin);
+          const id = first ? await pin.set(body.pin) : await pin.unlock(body.pin, client);
           if (first) activity.add({ who: null, tokenId: null, tool: "pin set", outcome: "ok", detail: "A PIN was chosen for this page." });
           return sendJson(res, 200, { ok: true }, { "Set-Cookie": pin.cookie(id, secure) });
         } catch (e) {
