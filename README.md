@@ -88,8 +88,9 @@ resets, reboots, core (system) installs/updates/restarts, installs by IPFS hash 
   (`/data/last-version`). A reboot, power cut, crash or Pause/Start keeps the old container, and an
   update brings a new version, so neither opens it. Once per start. Removing AI Connect with its
   data and installing it again also starts from scratch.
-- A `pin.json` that cannot be read also removes every key at start (the page then asks for a new
-  PIN).
+- No PIN means no keys: at start, a `pin.json` that cannot be read, or keys left without a PIN (a
+  reset that could not save the empty key list, e.g. on a full disk), removes every key (the page
+  then asks for a new PIN).
 - Known limit: until the owner chooses the PIN, any device on the AVADO network can choose it
   first (the owner would then see "Enter your PIN" and use the reset). Same first-open model as
   other AVADO app pages.

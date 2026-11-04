@@ -7,7 +7,8 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { after, test } from "node:test";
-import { PinError, PinGuard, checkNewPin, ownerRestarted, waitAfter } from "../src/pin.js";
+import { PinError, PinGuard, checkNewPin, ownerRestarted, removeKeysWithoutPin, waitAfter } from "../src/pin.js";
+import { TokenStore } from "../src/tokens.js";
 import { GOOD_PIN, TEST_SCRYPT_N, pageHeaders, servers, sessionFrom, setPin, startHttp, tempDir } from "./helpers.js";
 
 after(() => servers.forEach((s) => s.close()));
@@ -342,4 +343,41 @@ test("a PIN file that cannot be read is reported as damaged (server.ts then remo
   assert.equal(g.isSet(), false);
   assert.equal(existsSync(file), false);
   assert.equal(await new PinGuard(path.join(tempDir(), "none.json")).load(), "none");
+});
+
+test("keys without a PIN are removed at start (a damaged PIN file, or a reset that could not save the empty key list)", async () => {
+  const dir = tempDir();
+  const tokensFile = path.join(dir, "tokens.json");
+  const pinFile = path.join(dir, "pin.json");
+  const made = new TokenStore(tokensFile);
+  await made.load();
+  await made.create({ name: "Claude Code", client: "claude-code", scopes: ["read", "install"] });
+  await made.create({ name: "Codex", client: "codex", scopes: ["read"] });
+
+  // a PIN is set: the keys stay
+  const withPin = new PinGuard(pinFile, { scryptN: TEST_SCRYPT_N });
+  await withPin.set(GOOD_PIN);
+  const kept = new TokenStore(tokensFile);
+  await kept.load();
+  assert.equal(await removeKeysWithoutPin(withPin, kept), 0);
+  assert.equal(kept.list().length, 2);
+
+  // the PIN file is gone but tokens.json still holds the keys (what a reset leaves on a full disk)
+  rmSync(pinFile);
+  const pin = new PinGuard(pinFile, { scryptN: TEST_SCRYPT_N });
+  assert.equal(await pin.load(), "none");
+  const left = new TokenStore(tokensFile);
+  await left.load();
+  assert.equal(left.list().length, 2);
+  assert.equal(await removeKeysWithoutPin(pin, left), 2);
+  assert.equal(left.list().length, 0);
+  const reread = new TokenStore(tokensFile);
+  await reread.load();
+  assert.equal(reread.list().length, 0, "removed on disk too");
+
+  // a failing save never stops the start, and the keys are gone from memory anyway
+  let cleared = false;
+  const failing = { list: () => (cleared ? [] : [{}]), revokeAll: async () => ((cleared = true), Promise.reject(new Error("disk full"))) };
+  assert.equal(await removeKeysWithoutPin(pin, failing), 1);
+  assert.equal(failing.list().length, 0);
 });

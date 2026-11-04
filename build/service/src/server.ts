@@ -8,7 +8,7 @@ import { CertManager, type CertPair } from "./certs.js";
 import { loadConfig } from "./config.js";
 import { createAgentApp, createApp, defaultLimits, type AppDeps } from "./http.js";
 import { createLogger, errorMessage } from "./log.js";
-import { PinGuard, ownerRestarted } from "./pin.js";
+import { PinGuard, ownerRestarted, removeKeysWithoutPin } from "./pin.js";
 import { TokenStore } from "./tokens.js";
 import { WampClient } from "./wamp.js";
 
@@ -26,11 +26,13 @@ const activity = new ActivityLog(path.join(config.stateDir, "activity.json"));
 const resetOpen = await ownerRestarted(config.containerMarker, path.join(config.stateDir, "last-version"), config.version);
 const pin = new PinGuard(path.join(config.stateDir, "pin.json"), { startedAt: Date.now(), resetOpen });
 const [, , pinFile] = await Promise.all([tokens.load(), activity.load(), pin.load()]);
-if (pinFile === "damaged") {
-  // The page now asks for a new PIN; whoever chooses it must not find the owner's keys.
-  const removed = await tokens.revokeAll();
-  activity.add({ who: null, tokenId: null, tool: "pin reset", outcome: "ok", detail: `The saved PIN could not be read, so the page asks for a new one. ${removed} connection(s) were removed for safety.` });
-  logger.warn(`pin.json could not be read; ${removed} key(s) removed`);
+// No PIN means no keys: the page now asks for a new PIN, and whoever chooses it must not find the
+// owner's keys (a damaged pin.json, or a reset that could not finish).
+const removed = await removeKeysWithoutPin(pin, tokens);
+if (pinFile === "damaged" || removed > 0) {
+  const why = pinFile === "damaged" ? "The saved PIN could not be read" : "There was no PIN but there were connections (a PIN reset did not finish)";
+  activity.add({ who: null, tokenId: null, tool: "pin reset", outcome: "ok", detail: `${why}, so the page asks for a new one. ${removed === 1 ? "1 connection was" : `${removed} connections were`} removed for safety.` });
+  logger.warn(`${pinFile === "damaged" ? "pin.json could not be read" : "keys without a PIN"}; ${removed} key(s) removed`);
 }
 if (resetOpen && pin.isSet()) logger.info("restarted from the Admin: the page offers Reset the PIN for 10 minutes");
 

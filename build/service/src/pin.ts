@@ -372,6 +372,21 @@ export class PinGuard {
   }
 }
 
+/**
+ * Keys can only be made with the PIN, so keys without a PIN mean something stopped half-way: a
+ * damaged pin.json, or a reset that removed the PIN but could not save the empty key list (power
+ * cut, full disk: the key store does not report a failed save). Whoever chooses the next PIN must
+ * not find the owner's keys, so they are removed at start. Returns how many were removed (0 when
+ * a PIN is set or there were none). Never throws: the keys are gone from memory either way.
+ */
+export async function removeKeysWithoutPin(pin: PinGuard, tokens: { list(): unknown[]; revokeAll(): Promise<number> }): Promise<number> {
+  if (pin.isSet()) return 0;
+  const n = tokens.list().length;
+  if (n === 0) return 0;
+  await tokens.revokeAll().catch(() => {});
+  return n;
+}
+
 export function waitWords(seconds: number): string {
   if (seconds < 90) return `Too many wrong tries. Wait ${seconds} seconds, then try again.`;
   const m = Math.ceil(seconds / 60);
