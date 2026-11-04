@@ -1,0 +1,22 @@
+{
+  "source": "https://github.com/AvadoDServer/DNP_ADMIN build/src/src",
+  "commit": "e9f102c66da55458f433ce3cf6d8d877cd6a54ed",
+  "note": "Byte-for-byte copies. Do not edit: run `yarn vendor:sync` instead. test/vendor-sync.test.ts checks these hashes.",
+  "files": {
+    "health/engine.js": "cdd70f2cfcc75fe5af7520ff3f059a092e2318f674d3fbe7e86454ac03487fc2",
+    "health/clients.js": "38c8bd2a90e6965e997727499f7750e69e9c8d28f46615b4eb636800d06e1478",
+    "health/prometheus.js": "8321421bc9b42aa8e8a7f993a6150cdd422e8ef500a01b927394cc77bc985b67",
+    "health/feeRecipients.js": "33abbe5fad238c429bfc84cab68b3f62e9b796454731b00411e08d38e093aa9e",
+    "health/updateAges.js": "8c6d7007c3aec668bb4e3c90b3dae2eb49581bae79d8374637db0d9c48fadac0",
+    "health/rules/index.js": "9a1e2959910432304467c4a827ebc0318e4df5e4e8ceb35b6ccbadbb7cab4e05",
+    "health/rules/access.js": "7e163d67a63c44c62aca185028055af1d3e54f4824d1b7c7887c163138f305ed",
+    "health/rules/apps.js": "35e694dad49bdc85827582015dee30fbe9cb0ac446823a4fdea6d811bd4e07ed",
+    "health/rules/chain.js": "0ff8af08097d8ce78fa41ef48f50f713c66c64b2e2272a8db4131100c9978df3",
+    "health/rules/core.js": "1c6a155ccc5cd782b86cfbe10a76ef797743d1ff9238462c2639cf2f82d95652",
+    "health/rules/setup.js": "d4174e7ad56cfab47bcc918517a6c4300633b9264df310df639c527e39d0114f",
+    "health/rules/storage.js": "0a15aae74e605f177e75c86df2381b6182e4d90d5f1fc2077087a782a0bd0100",
+    "health/rules/updates.js": "6a6430f6d9a2364f486c46a5bfb76dcbd73e62b4bb024cf61c6564b295fb9f04",
+    "health/rules/validators.js": "0efdfbb193873bc3f265e45261ef873444178fc026ed1ffd1ef62c17bd5b6d5b",
+    "services/store/updates.js": "a30579ac7a75fe75eefca2fe19e2e086d686d860837b8659a1911b1a359b4739"
+  }
+}

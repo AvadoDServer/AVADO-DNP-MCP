@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AVADO AI Connect</title>
+    <link rel="icon" href="/favicon.png" />
+    <link rel="stylesheet" href="/theme.css" />
+    <link rel="stylesheet" href="/base.css" />
+    <link rel="stylesheet" href="/style.css" />
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <main class="shell">
+      <header class="top">
+        <span class="brand">AVADO <strong>AI Connect</strong></span>
+        <span class="version" id="version"></span>
+      </header>
+
+      <section class="card">
+        <h1>Let your own AI assistant look after your AVADO</h1>
+        <p class="lead">
+          Connect Claude, ChatGPT, Codex, Cursor or another assistant to this box. It can check how the box is doing, read app logs and
+          explain problems in plain words. You decide, per assistant, whether it may also restart, install or update apps.
+        </p>
+        <ul class="never">
+          <li>It can <strong>never</strong> see your validator keys or their passwords, wallets or recovery phrases, or your Admin password.</li>
+          <li>It can <strong>never</strong> change withdrawal or fee settings, remove apps or data, or run commands on the box.</li>
+          <li>Logs are filtered: anything that looks like a key, password or recovery phrase is hidden before your assistant sees it.</li>
+        </ul>
+      </section>
+
+      <section class="card attention" id="approvals" hidden aria-live="polite">
+        <h2>Your assistant is waiting for your OK</h2>
+        <ul class="list" id="approval-list"></ul>
+      </section>
+
+      <section class="card">
+        <h2>Connect an assistant</h2>
+        <p class="muted">Pick the one you use. You get a private key and the exact steps to paste into it.</p>
+        <div class="choices" id="client-choices">
+          <button type="button" class="choice" data-client="claude-code">Claude Code</button>
+          <button type="button" class="choice" data-client="claude-desktop">Claude Desktop</button>
+          <button type="button" class="choice" data-client="chatgpt">ChatGPT</button>
+          <button type="button" class="choice" data-client="codex">Codex</button>
+          <button type="button" class="choice" data-client="cursor">Cursor</button>
+          <button type="button" class="choice" data-client="other">Other</button>
+        </div>
+
+        <form class="form" id="create-form" hidden>
+          <label class="field">
+            <span>Name for this connection</span>
+            <input type="text" id="token-name" maxlength="60" required />
+          </label>
+          <fieldset class="field">
+            <legend>What may it do?</legend>
+            <label class="check"><input type="checkbox" checked disabled /> Look at the box: health, apps, logs, sync, the store (always on)</label>
+            <label class="check"><input type="checkbox" id="scope-restart" /> Restart apps</label>
+            <label class="check"><input type="checkbox" id="scope-install" /> Install and update apps from the AVADO store</label>
+            <label class="check sub"
+              ><input type="checkbox" id="confirm-actions" checked /> Ask me on this page before it restarts, installs or updates anything
+              (recommended)</label
+            >
+          </fieldset>
+          <div class="actions">
+            <button type="submit" class="button" id="create-button">Create the key</button>
+            <button type="button" class="button ghost" id="create-cancel">Cancel</button>
+            <span class="muted" id="create-msg" role="status"></span>
+          </div>
+        </form>
+
+        <div class="made" id="made" hidden>
+          <p class="notice ok">
+            Your key is ready. <strong>Copy it now:</strong> it is shown only this once. Anyone with this key can do what you allowed, so keep it
+            private.
+          </p>
+          <div class="copyrow">
+            <code id="made-key"></code>
+            <button type="button" class="button small" data-copy="made-key">Copy key</button>
+          </div>
+          <div id="made-steps"></div>
+          <div class="actions"><button type="button" class="button ghost" id="made-done">Done</button></div>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Your connections</h2>
+        <p class="muted" id="tokens-empty">No assistant is connected yet.</p>
+        <ul class="list" id="token-list"></ul>
+      </section>
+
+      <section class="card">
+        <h2>What your assistants did</h2>
+        <p class="muted" id="activity-empty">Nothing yet.</p>
+        <ul class="list activity" id="activity-list"></ul>
+      </section>
+
+      <section class="card">
+        <h2>Where your assistant can reach AI Connect</h2>
+        <dl class="facts">
+          <div>
+            <dt>On your AVADO network</dt>
+            <dd><code id="url-local">https://mcp.my.ava.do/mcp</code></dd>
+          </div>
+          <div>
+            <dt>Through Tailscale</dt>
+            <dd id="url-tailscale">Install the Tailscale app from the AVADO store to use AI Connect from anywhere.</dd>
+          </div>
+        </dl>
+        <p class="muted small">
+          The first address works on computers connected to your AVADO through AVADO Remote Access or the AVADO WiFi. ChatGPT, and Claude on the
+          web, run on the internet and cannot reach your home network: for them, switch on “Share AI Connect on the internet” in the Tailscale
+          app. That gives AI Connect a public address; only someone with one of your keys can use it, and the key page you are reading now is
+          never shared.
+        </p>
+        <p class="muted small" id="https-state"></p>
+      </section>
+
+      <p class="privacy">
+        AI Connect runs only on your AVADO. It sends nothing to AVADO. What your assistant reads goes to the company that runs the assistant
+        (Anthropic, OpenAI, …) under your account with them.
+      </p>
+    </main>
+  </body>
+</html>
