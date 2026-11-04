@@ -1,11 +1,15 @@
 import { mkdtempSync } from "node:fs";
+import http from "node:http";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { ActivityLog } from "../src/activity.js";
 import { Approvals } from "../src/approvals.js";
 import { Box } from "../src/box.js";
 import { loadConfig, type Config } from "../src/config.js";
+import { createAgentApp, createApp, defaultLimits, type AppDeps, type Limits } from "../src/http.js";
 import { silentLogger } from "../src/log.js";
+import { PinGuard, type PinOptions } from "../src/pin.js";
 import { RateLimiter } from "../src/ratelimit.js";
 import { TokenStore, type Scope, type TokenRecord } from "../src/tokens.js";
 import type { ToolContext } from "../src/tools.js";
@@ -201,4 +205,59 @@ export function makeWorld(opts: { scopes?: Scope[]; confirm?: boolean; handlers?
   const procedures = () => wamps.flatMap((w) => w.calls.map((c) => c.procedure.replace(".dappmanager.dnp.dappnode.eth", "")));
   const callsOf = (name: string) => wamps.flatMap((w) => w.calls.filter((c) => c.procedure === `${name}.dappmanager.dnp.dappnode.eth`));
   return { config, box, activity, approvals, tokens, token, ctx, wamps, procedures, callsOf, fetchCalls };
+}
+
+// ---- the HTTP side (page, its API, /mcp) ----
+
+export const servers: http.Server[] = [];
+
+/** Low scrypt cost for tests (the real one takes ~100 ms per try). */
+export const TEST_SCRYPT_N = 1024;
+export const GOOD_PIN = "482915";
+
+/** The page app and the agent-only app on random ports, with one key made directly in the store. */
+export async function startHttp(scopes: Scope[] = ["read"], limits: Limits = defaultLimits(), pinOpts: PinOptions = {}, fetchImpl?: typeof fetch) {
+  const w = makeWorld();
+  await w.tokens.load();
+  const pin = new PinGuard(path.join(w.config.stateDir, "pin.json"), { scryptN: TEST_SCRYPT_N, ...pinOpts });
+  await pin.load();
+  const deps: AppDeps = {
+    config: w.config,
+    logger: silentLogger,
+    box: w.box,
+    tokens: w.tokens,
+    activity: w.activity,
+    approvals: w.approvals,
+    pin,
+    fetch: fetchImpl ?? ((async () => new Response("no", { status: 404 })) as typeof fetch),
+    httpsInfo: () => ({ on: false, validTo: null }),
+  };
+  const listen = async (app: http.RequestListener) => {
+    const s = http.createServer(app);
+    servers.push(s);
+    await new Promise<void>((r) => s.listen(0, "127.0.0.1", r));
+    return `http://127.0.0.1:${(s.address() as AddressInfo).port}`;
+  };
+  const main = await listen(createApp(deps, limits));
+  const agent = await listen(createAgentApp(deps, limits));
+  const { token } = await w.tokens.create({ name: "SDK client", client: "other", scopes, confirmActions: false });
+  return { w, main, agent, token, pin, deps };
+}
+
+/** Headers the page sends on every change. */
+export const pageHeaders = { "Content-Type": "application/json", "X-Avado-Request": "1" };
+
+/** "aic_session=..." from a Set-Cookie header, ready for a Cookie header. */
+export function sessionFrom(res: Response): string {
+  const set = res.headers.get("set-cookie") ?? "";
+  const m = /aic_session=([^;]*)/.exec(set);
+  if (!m || !m[1]) throw new Error(`no session cookie in: ${set}`);
+  return `aic_session=${m[1]}`;
+}
+
+/** Chooses the first PIN through the page API; returns the Cookie header of the session it gives. */
+export async function setPin(main: string, pin = GOOD_PIN): Promise<string> {
+  const r = await fetch(`${main}/api/pin/set`, { method: "POST", headers: pageHeaders, body: JSON.stringify({ pin }) });
+  if (r.status !== 200) throw new Error(`set PIN: ${r.status} ${await r.text()}`);
+  return sessionFrom(r);
 }

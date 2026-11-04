@@ -129,6 +129,15 @@ export class TokenStore {
     return true;
   }
 
+  /** Removes every key (used when the page PIN is reset). Returns how many there were. */
+  async revokeAll(): Promise<number> {
+    const n = this.tokens.length;
+    this.tokens = [];
+    this.reindex();
+    await this.save();
+    return n;
+  }
+
   async setConfirm(id: string, confirmActions: boolean): Promise<boolean> {
     const t = this.tokens.find((x) => x.id === id);
     if (!t) return false;

@@ -8,6 +8,7 @@ import { CertManager, type CertPair } from "./certs.js";
 import { loadConfig } from "./config.js";
 import { createAgentApp, createApp, defaultLimits, type AppDeps } from "./http.js";
 import { createLogger, errorMessage } from "./log.js";
+import { PinGuard, ownerRestarted } from "./pin.js";
 import { TokenStore } from "./tokens.js";
 import { WampClient } from "./wamp.js";
 
@@ -20,7 +21,18 @@ process.on("unhandledRejection", (reason) => {
 
 const tokens = new TokenStore(path.join(config.stateDir, "tokens.json"));
 const activity = new ActivityLog(path.join(config.stateDir, "activity.json"));
-await Promise.all([tokens.load(), activity.load()]);
+// "Forgot PIN" works for a few minutes after the owner presses Restart for AI Connect in the Admin
+// (a new container with the same version; see ownerRestarted in pin.ts).
+const resetOpen = await ownerRestarted(config.containerMarker, path.join(config.stateDir, "last-version"), config.version);
+const pin = new PinGuard(path.join(config.stateDir, "pin.json"), { startedAt: Date.now(), resetOpen });
+const [, , pinFile] = await Promise.all([tokens.load(), activity.load(), pin.load()]);
+if (pinFile === "damaged") {
+  // The page now asks for a new PIN; whoever chooses it must not find the owner's keys.
+  const removed = await tokens.revokeAll();
+  activity.add({ who: null, tokenId: null, tool: "pin reset", outcome: "ok", detail: `The saved PIN could not be read, so the page asks for a new one. ${removed} connection(s) were removed for safety.` });
+  logger.warn(`pin.json could not be read; ${removed} key(s) removed`);
+}
+if (resetOpen && pin.isSet()) logger.info("restarted from the Admin: the page offers Reset the PIN for 10 minutes");
 
 const box = new Box(config, logger, {
   openWamp: () => new WampClient({ url: config.wampUrl, realm: config.wampRealm }),
@@ -38,6 +50,7 @@ const deps: AppDeps = {
   tokens,
   activity,
   approvals: new Approvals(),
+  pin,
   fetch: (input, init) => fetch(input, init),
   httpsInfo: () => ({ on: httpsServer !== null && httpsServer.listening, validTo: certValidTo }),
 };
@@ -86,7 +99,7 @@ if (config.httpsPort) {
   certs.start();
 }
 
-logger.info(`AVADO AI Connect ${config.version} started; ${tokens.list().length} connection(s)`);
+logger.info(`AVADO AI Connect ${config.version} started; ${tokens.list().length} connection(s); page PIN ${pin.isSet() ? "set" : "not set yet"}`);
 
 function shutdown(signal: string): void {
   logger.info(`${signal} received, shutting down`);

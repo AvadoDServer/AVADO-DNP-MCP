@@ -23,8 +23,13 @@ export interface Config {
    * itself and older packages use). Each entry is the base URL holding my.ava.do.crt and .key.
    */
   certSources: string[];
-  /** Holds tokens.json, activity.json and the downloaded certificate. */
+  /** Holds tokens.json, activity.json, pin.json and the downloaded certificate. */
   stateDir: string;
+  /**
+   * A file in the container's own files, NOT in a volume: missing only in a new container. With
+   * stateDir/last-version it tells an Admin restart from a reboot or an update (pin.ts).
+   */
+  containerMarker: string;
   publicDir: string;
   allowedHostnames: string[];
   /** Origins a browser-based MCP client may call /mcp from (all others are refused, MCP spec). */
@@ -94,6 +99,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       .filter(Boolean)
       .map((s, i) => url({ [`CERT_SOURCES_${i}`]: s }, `CERT_SOURCES_${i}`, s)),
     stateDir: env.STATE_DIR || "/data",
+    containerMarker: env.CONTAINER_MARKER || "/tmp/ai-connect-container",
     publicDir: env.PUBLIC_DIR || new URL("../public", import.meta.url).pathname,
     allowedHostnames: [...DEFAULT_ALLOWED_HOSTNAMES, ...list(env, "EXTRA_ALLOWED_HOSTNAMES")],
     allowedOrigins: ["http://mcp.my.ava.do", "https://mcp.my.ava.do", ...list(env, "EXTRA_ALLOWED_ORIGINS")],

@@ -4,42 +4,16 @@
  */
 import assert from "node:assert/strict";
 import http from "node:http";
-import type { AddressInfo } from "node:net";
 import { after, test } from "node:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { createAgentApp, createApp, defaultLimits, type AppDeps } from "../src/http.js";
-import { silentLogger } from "../src/log.js";
+import { defaultLimits } from "../src/http.js";
 import { RateLimiter } from "../src/ratelimit.js";
-import { makeWorld } from "./helpers.js";
+import { servers, setPin, startHttp } from "./helpers.js";
 
-const servers: http.Server[] = [];
 after(() => servers.forEach((s) => s.close()));
 
-async function start(scopes: Array<"read" | "restart" | "install"> = ["read"], limits = defaultLimits()) {
-  const w = makeWorld();
-  await w.tokens.load();
-  const deps: AppDeps = {
-    config: w.config,
-    logger: silentLogger,
-    box: w.box,
-    tokens: w.tokens,
-    activity: w.activity,
-    approvals: w.approvals,
-    fetch: (async () => new Response("no", { status: 404 })) as typeof fetch,
-    httpsInfo: () => ({ on: false, validTo: null }),
-  };
-  const listen = async (app: http.RequestListener) => {
-    const s = http.createServer(app);
-    servers.push(s);
-    await new Promise<void>((r) => s.listen(0, "127.0.0.1", r));
-    return `http://127.0.0.1:${(s.address() as AddressInfo).port}`;
-  };
-  const main = await listen(createApp(deps, limits));
-  const agent = await listen(createAgentApp(deps, limits));
-  const { token } = await w.tokens.create({ name: "SDK client", client: "other", scopes, confirmActions: false });
-  return { w, main, agent, token };
-}
+const start = startHttp;
 
 async function connect(url: string, headers: Record<string, string> = {}) {
   const client = new Client({ name: "test", version: "1.0.0" });
@@ -155,14 +129,15 @@ test("the page API needs the box's own host name and the X-Avado-Request header"
 
 test("the page makes, lists and removes a key; a removed key stops working at once", async () => {
   const { main } = await start();
-  const h = { "Content-Type": "application/json", "X-Avado-Request": "1" };
+  const session = await setPin(main);
+  const h = { "Content-Type": "application/json", "X-Avado-Request": "1", Cookie: session };
   const made = (await (await fetch(`${main}/api/tokens`, { method: "POST", headers: h, body: JSON.stringify({ name: "Cursor", client: "cursor", scopes: ["read", "restart"] }) })).json()) as {
     token: string;
     record: { id: string };
   };
   const ok = await fetch(`${main}/mcp`, { method: "POST", headers: { ...mcpHeaders, Authorization: `Bearer ${made.token}` }, body: rpc({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "t", version: "1" } } }) });
   assert.equal(ok.status, 200);
-  const state = (await (await fetch(`${main}/api/state`)).json()) as { tokens: Array<{ id: string; hash?: string }> };
+  const state = (await (await fetch(`${main}/api/state`, { headers: { Cookie: session } })).json()) as { tokens: Array<{ id: string; hash?: string }> };
   assert.ok(state.tokens.some((t) => t.id === made.record.id));
   assert.ok(state.tokens.every((t) => t.hash === undefined));
   assert.equal((await fetch(`${main}/api/tokens/${made.record.id}/revoke`, { method: "POST", headers: h, body: "{}" })).status, 200);
@@ -176,4 +151,15 @@ test("GET and DELETE on /mcp answer 405 (stateless server, no streams or session
     const r = await fetch(`${main}/mcp`, { method, headers: { Authorization: `Bearer ${token}`, Accept: "text/event-stream" } });
     assert.equal(r.status, 405, method);
   }
+});
+
+test("the page state never waits for the Tailscale lookup (no Tailscale: the lookup hangs until its timeout)", async () => {
+  const hanging = ((_u: unknown, init?: RequestInit) =>
+    new Promise<Response>((_r, reject) => init?.signal?.addEventListener("abort", () => reject(new Error("aborted"))))) as typeof fetch;
+  const { main } = await start(["read"], defaultLimits(), {}, hanging);
+  const t = Date.now();
+  const r = await fetch(`${main}/api/state`);
+  assert.equal(r.status, 200);
+  assert.ok(Date.now() - t < 1000, `took ${Date.now() - t} ms`);
+  assert.equal(((await r.json()) as { tailscale: unknown }).tailscale, null);
 });

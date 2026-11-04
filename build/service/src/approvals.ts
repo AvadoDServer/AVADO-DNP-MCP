@@ -61,4 +61,9 @@ export class Approvals {
   dropToken(tokenId: string): void {
     for (const p of [...this.pending.values()]) if (p.item.tokenId === tokenId) this.decide(p.item.id, "declined");
   }
+
+  /** Every waiting action is declined (the page PIN was reset). */
+  dropAll(): void {
+    for (const id of [...this.pending.keys()]) this.decide(id, "declined");
+  }
 }

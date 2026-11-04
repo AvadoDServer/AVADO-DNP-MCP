@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import type { IncomingMessage, RequestListener, ServerResponse } from "node:http";
 import path from "node:path";
+import type { TLSSocket } from "node:tls";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import type { ActivityLog } from "./activity.js";
 import type { Approvals } from "./approvals.js";
@@ -9,6 +10,7 @@ import type { Config } from "./config.js";
 import { checkCsrf, isSafeMethod } from "./csrf.js";
 import { isAllowedHost } from "./host.js";
 import { errorMessage, type Logger } from "./log.js";
+import { PinError, PinGuard } from "./pin.js";
 import { RateLimiter } from "./ratelimit.js";
 import type { FetchLike } from "./store.js";
 import { TokenError, type TokenRecord, type TokenStore } from "./tokens.js";
@@ -126,6 +128,8 @@ export interface AppDeps {
   tokens: TokenStore;
   activity: ActivityLog;
   approvals: Approvals;
+  /** The page PIN and its sessions. */
+  pin: PinGuard;
   fetch: FetchLike;
   /** Whether HTTPS is up (for the page). */
   httpsInfo(): { on: boolean; validTo: string | null };
@@ -292,8 +296,38 @@ export function createAgentApp(deps: AppDeps, limits: Limits): RequestListener {
 
 /** The page, its API and the MCP endpoint (http://mcp.my.ava.do and https://mcp.my.ava.do). */
 export function createApp(deps: AppDeps, limits: Limits): RequestListener {
-  const { config, logger, tokens, activity, approvals, box } = deps;
+  const { config, logger, tokens, activity, approvals, box, pin } = deps;
   const files = loadStaticFiles(config.publicDir);
+
+  const pinState = (cookie: string | undefined, unlocked: boolean) => ({
+    set: pin.isSet(),
+    unlocked,
+    expiresAt: unlocked ? pin.expiresAt(cookie) : null,
+    retryAfter: pin.retryAfter(),
+    resetUntil: pin.resetUntil(),
+  });
+
+  // What the Tailscale package says, refreshed in the background at most every 10 seconds, so the
+  // page (and its PIN form) never waits for it: without Tailscale the lookup takes up to 2 seconds.
+  let tsInfo: Record<string, unknown> | null = null;
+  let tsAt = 0;
+  let tsBusy: Promise<void> | null = null;
+  const refreshTailscale = (): Promise<void> => {
+    tsBusy ??= tailscaleInfo(deps.fetch)
+      .then((v) => {
+        tsInfo = v;
+      })
+      .catch(() => {})
+      .finally(() => {
+        tsAt = Date.now();
+        tsBusy = null;
+      });
+    return tsBusy;
+  };
+  void refreshTailscale();
+
+  const pinError = (res: ServerResponse, e: PinError) =>
+    sendError(res, e.status, e.message, e.retryAfter ? { "Retry-After": String(e.retryAfter) } : {});
 
   return (req, res) => {
     void (async () => {
@@ -321,17 +355,80 @@ export function createApp(deps: AppDeps, limits: Limits): RequestListener {
         return sendError(res, 403, csrf);
       }
 
+      const cookie = req.headers.cookie;
+      const secure = (req.socket as TLSSocket).encrypted === true;
+
       if (pathname === "/api/state") {
         if (!isSafeMethod(req.method)) return sendError(res, 405, "Use GET for this route", { Allow: "GET" });
-        return sendJson(res, 200, {
+        if (Date.now() - tsAt > 10_000) void refreshTailscale();
+        // The page asks every few seconds; that alone does not keep the session alive.
+        const unlocked = pin.check(cookie, false);
+        const open = {
           version: config.version,
           https: deps.httpsInfo(),
+          tailscale: tsInfo,
+          pin: pinState(cookie, unlocked),
+        };
+        // Locked (or no PIN yet): no connections, no activity, no waiting actions; only how many wait.
+        if (!unlocked) return sendJson(res, 200, { ...open, waiting: approvals.list().length });
+        return sendJson(res, 200, {
+          ...open,
           tokens: tokens.list(),
           approvals: approvals.list(),
           activity: activity.list(150),
           jobs: box.jobsList(),
-          tailscale: await tailscaleInfo(deps.fetch),
         });
+      }
+
+      // ---- the PIN (these routes work without a session) ----
+      if (pathname === "/api/pin/set" || pathname === "/api/pin/unlock") {
+        if (req.method !== "POST") return sendError(res, 405, "Use POST for this route", { Allow: "POST" });
+        const body = await readJson(req).catch(() => ({}) as Record<string, unknown>);
+        const first = pathname === "/api/pin/set";
+        try {
+          const id = first ? await pin.set(body.pin) : await pin.unlock(body.pin);
+          if (first) activity.add({ who: null, tokenId: null, tool: "pin set", outcome: "ok", detail: "A PIN was chosen for this page." });
+          return sendJson(res, 200, { ok: true }, { "Set-Cookie": pin.cookie(id, secure) });
+        } catch (e) {
+          if (!(e instanceof PinError)) throw e;
+          if (e.wrong) {
+            activity.add({ who: null, tokenId: null, tool: "wrong pin", outcome: "refused", detail: "A wrong PIN was entered on this page." });
+          }
+          return pinError(res, e);
+        }
+      }
+
+      if (pathname === "/api/pin/lock") {
+        if (req.method !== "POST") return sendError(res, 405, "Use POST for this route", { Allow: "POST" });
+        pin.lock(cookie);
+        return sendJson(res, 200, { ok: true }, { "Set-Cookie": PinGuard.clearCookie(secure) });
+      }
+
+      if (pathname === "/api/pin/reset") {
+        if (req.method !== "POST") return sendError(res, 405, "Use POST for this route", { Allow: "POST" });
+        try {
+          await pin.reset();
+        } catch (e) {
+          if (e instanceof PinError) return pinError(res, e);
+          throw e;
+        }
+        // Whoever resets the PIN gets an empty AI Connect: every key stops working at once.
+        const removed = await tokens.revokeAll();
+        approvals.dropAll();
+        activity.add({
+          who: null,
+          tokenId: null,
+          tool: "pin reset",
+          outcome: "ok",
+          detail: `The PIN was reset after a restart. ${removed === 1 ? "1 connection was" : `${removed} connections were`} removed; their keys no longer work.`,
+        });
+        logger.warn(`page PIN reset; ${removed} key(s) removed`);
+        return sendJson(res, 200, { ok: true, removed }, { "Set-Cookie": PinGuard.clearCookie(secure) });
+      }
+
+      // ---- everything below needs the PIN ----
+      if (!pin.check(cookie)) {
+        return sendError(res, 401, pin.isSet() ? "Enter your PIN first." : "Choose a PIN for this page first.", { "Set-Cookie": PinGuard.clearCookie(secure) });
       }
 
       if (pathname === "/api/tokens") {
