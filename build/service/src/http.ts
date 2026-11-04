@@ -181,12 +181,16 @@ export async function handleMcp(req: IncomingMessage, res: ServerResponse, pathK
     return rpcError(res, 405, "Use POST for MCP requests.");
   }
   const addr = clientAddress(req);
-  if (limits.badAuth.blocked(addr)) {
-    return rpcError(res, 429, "Too many requests with a wrong key. Wait a few minutes.", { "Retry-After": "300" });
-  }
   const presented = pathKey ?? bearer(req);
   const token: TokenRecord | null = tokens.verify(presented);
   if (!token) {
+    // The wrong-key limit only ever stops requests without a valid key. Everything that comes in
+    // through the Tailscale package (Serve, and Funnel from the internet) shares one client address,
+    // so blocking the address itself would let any stranger lock the owner's assistants out.
+    // A blocked address is not logged again either, so it cannot flood the activity list.
+    if (limits.badAuth.blocked(addr)) {
+      return rpcError(res, 429, "Too many requests with a wrong key. Wait a few minutes.", { "Retry-After": "300" });
+    }
     limits.badAuth.take(addr);
     activity.add({ who: null, tokenId: null, tool: "connect", outcome: "refused", detail: presented ? "A key that is not (or no longer) valid was used." : "A request without a key." });
     return rpcError(res, 401, presented ? "This key is not valid (it may have been removed). Make a new one on the AI Connect page." : "A key is needed. Make one on the AI Connect page (http://mcp.my.ava.do).", {

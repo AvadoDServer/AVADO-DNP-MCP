@@ -107,6 +107,17 @@ test("no key or a wrong key: 401, logged, and too many wrong keys from one addre
   assert.ok(w.activity.list().filter((e) => e.tool === "connect" && e.outcome === "refused").length >= 3);
 });
 
+test("wrong keys from a shared address (Tailscale Funnel) never lock out a valid key, and stop filling the log", async () => {
+  const limits = { ...defaultLimits(), badAuth: new RateLimiter(3, 60_000) };
+  const { main, token, w } = await start(["read"], limits);
+  for (let i = 0; i < 10; i++) await fetch(`${main}/mcp`, { method: "POST", headers: mcpHeaders, body: rpc() });
+  const stranger = await fetch(`${main}/mcp`, { method: "POST", headers: { ...mcpHeaders, Authorization: "Bearer avado_wrong" }, body: rpc() });
+  assert.equal(stranger.status, 429);
+  assert.equal(w.activity.list().filter((e) => e.tool === "connect").length, 3);
+  const owner = await fetch(`${main}/mcp`, { method: "POST", headers: { ...mcpHeaders, Authorization: `Bearer ${token}` }, body: rpc() });
+  assert.equal(owner.status, 200);
+});
+
 test("a web page on another site cannot call /mcp (Origin check)", async () => {
   const { main, token } = await start();
   const r = await fetch(`${main}/mcp`, { method: "POST", headers: { ...mcpHeaders, Authorization: `Bearer ${token}`, Origin: "https://evil.example" }, body: rpc() });

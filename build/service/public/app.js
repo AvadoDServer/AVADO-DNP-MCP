@@ -329,7 +329,7 @@
     } else if (ts.state !== "running") {
       dd.textContent = "The Tailscale app is installed but not logged in yet. Open it to log in.";
     } else if (!tailscaleUrl()) {
-      dd.textContent = "Open the Tailscale app and switch on “Make AI Connect reachable in my tailnet”.";
+      dd.textContent = "Open the Tailscale app and switch on “Make AI Connect reachable from my Tailscale devices”.";
     } else {
       dd.appendChild(el("code", { text: tailscaleUrl() }));
       if (publicUrl()) dd.appendChild(el("div", { class: "muted small", text: "Also shared on the internet (for ChatGPT): " + publicUrl() }));
