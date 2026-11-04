@@ -37,7 +37,12 @@
     "new connection": "connection created",
     "remove connection": "connection removed",
     settings: "settings changed",
+    "pin set": "PIN chosen",
+    "wrong pin": "a wrong PIN was entered",
+    "pin reset": "PIN reset",
   };
+
+  var PAGE_TOOLS = { "pin set": 1, "wrong pin": 1, "pin reset": 1 };
 
   var OUTCOME_WORDS = {
     ok: "Done",
@@ -94,7 +99,13 @@
     return fetch(path, opts).then(function (r) {
       return r.json().then(
         function (j) {
-          if (!r.ok) throw new Error(j && j.error ? j.error : "Something went wrong (" + r.status + ")");
+          if (!r.ok) {
+            var err = new Error(j && j.error ? j.error : "Something went wrong (" + r.status + ")");
+            err.status = r.status;
+            // the page locked itself (or was locked on another tab): show the PIN form again
+            if (r.status === 401 && path.indexOf("/api/pin/") !== 0) refresh();
+            throw err;
+          }
           return j;
         },
         function () {
@@ -102,6 +113,11 @@
         },
       );
     });
+  }
+
+  function clock(iso) {
+    var d = new Date(iso);
+    return isNaN(d) ? "" : d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
   }
 
   function localUrl() {
@@ -310,7 +326,7 @@
     $("activity-empty").hidden = items.length > 0;
     items.slice(0, 60).forEach(function (a) {
       var what = TOOL_WORDS[a.tool] || a.tool;
-      var line = (a.who || "Unknown") + ": " + what + (a.target ? " (" + a.target + ")" : "");
+      var line = (a.who || (PAGE_TOOLS[a.tool] ? "This page" : "Unknown")) + ": " + what + (a.target ? " (" + a.target + ")" : "");
       list.appendChild(
         el("li", { "data-outcome": a.outcome }, [
           el("div", { class: "row" }, [el("span", { text: line }), el("span", { class: "muted small", text: when(a.at) })]),
@@ -341,13 +357,50 @@
         : "Secure connection (https) is not ready yet: the box could not download the my.ava.do certificate. Until then use http://mcp.my.ava.do/mcp.";
   }
 
+  function renderPin() {
+    var p = state.pin || { set: false, unlocked: false };
+    var unlocked = !!p.unlocked;
+    Array.prototype.forEach.call(document.querySelectorAll(".needs-pin"), function (sec) {
+      if (sec.id !== "approvals") sec.hidden = !unlocked;
+    });
+    $("pin-card").hidden = unlocked;
+    $("pin-new").hidden = unlocked || p.set;
+    $("pin-enter").hidden = unlocked || !p.set;
+    if (unlocked) {
+      $("pin-session").textContent = p.expiresAt
+        ? "The page is unlocked. It locks again by itself at " + clock(p.expiresAt) + " (sooner after 10 minutes without a click)."
+        : "The page is unlocked.";
+      return;
+    }
+    $("create-form").hidden = true;
+    var waiting = state.waiting || 0;
+    $("pin-waiting").hidden = !p.set || waiting === 0;
+    $("pin-waiting").textContent =
+      waiting === 1 ? "Your assistant is waiting for your OK. Enter your PIN to see what it wants to do." : waiting + " requests from your assistants wait for your OK. Enter your PIN to see them.";
+    var wait = p.retryAfter || 0;
+    $("pin-enter-button").disabled = wait > 0;
+    if (wait > 0) $("pin-enter-msg").textContent = wait < 90 ? "Too many wrong tries. Wait " + wait + " seconds." : "Too many wrong tries. Wait " + Math.ceil(wait / 60) + " minutes.";
+    else if (/^Too many/.test($("pin-enter-msg").textContent)) $("pin-enter-msg").textContent = "";
+    $("pin-reset-open").hidden = !p.resetUntil;
+    $("pin-reset-closed").hidden = !!p.resetUntil;
+    if (p.resetUntil) {
+      $("pin-reset-until").textContent = clock(p.resetUntil);
+      $("pin-forgot").open = true;
+    }
+  }
+
   function render() {
     if (!state) return;
     $("version").textContent = state.version ? "Version " + state.version : "";
+    renderPin();
+    renderUrls();
+    if (!(state.pin && state.pin.unlocked)) {
+      $("approvals").hidden = true;
+      return;
+    }
     renderApprovals();
     renderTokens();
     renderActivity();
-    renderUrls();
   }
 
   function refresh() {
@@ -360,6 +413,82 @@
         /* keep the last view; try again later */
       });
   }
+
+  // ---- the PIN ----
+  $("pin-new-form").addEventListener("submit", function (ev) {
+    ev.preventDefault();
+    var a = $("pin-new-1").value.trim();
+    var b = $("pin-new-2").value.trim();
+    if (!/^[0-9]{6,12}$/.test(a)) {
+      $("pin-new-msg").textContent = "Use 6 to 12 digits, nothing else.";
+      return;
+    }
+    if (a !== b) {
+      $("pin-new-msg").textContent = "The two PINs are not the same. Please type them again.";
+      return;
+    }
+    $("pin-new-button").disabled = true;
+    $("pin-new-msg").textContent = "Saving…";
+    api("POST", "/api/pin/set", { pin: a })
+      .then(function () {
+        $("pin-new-1").value = $("pin-new-2").value = "";
+        $("pin-new-msg").textContent = "";
+        return refresh();
+      })
+      .catch(function (e) {
+        $("pin-new-msg").textContent = e.message;
+        return refresh();
+      })
+      .then(function () {
+        $("pin-new-button").disabled = false;
+      });
+  });
+
+  $("pin-enter-form").addEventListener("submit", function (ev) {
+    ev.preventDefault();
+    var v = $("pin-value").value.trim();
+    if (!v) return;
+    $("pin-enter-button").disabled = true;
+    $("pin-enter-msg").textContent = "Checking…";
+    api("POST", "/api/pin/unlock", { pin: v })
+      .then(function () {
+        $("pin-enter-msg").textContent = "";
+      })
+      .catch(function (e) {
+        $("pin-enter-msg").textContent = e.message;
+      })
+      .then(function () {
+        $("pin-value").value = "";
+        $("pin-enter-button").disabled = false;
+        return refresh();
+      });
+  });
+
+  $("pin-reset-button").addEventListener("click", function () {
+    if (!confirm("Reset the PIN? All your connections are removed and their keys stop working. You then choose a new PIN and connect your assistants again.")) return;
+    $("pin-reset-button").disabled = true;
+    api("POST", "/api/pin/reset")
+      .then(function (r) {
+        $("pin-reset-msg").textContent = "";
+        $("pin-new-msg").textContent = "The PIN was reset" + (r.removed ? " and " + (r.removed === 1 ? "1 connection was" : r.removed + " connections were") + " removed" : "") + ". Choose a new PIN.";
+        $("pin-forgot").open = false;
+      })
+      .catch(function (e) {
+        $("pin-reset-msg").textContent = e.message;
+      })
+      .then(function () {
+        $("pin-reset-button").disabled = false;
+        return refresh();
+      });
+  });
+
+  $("pin-lock").addEventListener("click", function () {
+    api("POST", "/api/pin/lock")
+      .catch(function () {
+        /* locked either way once the session is gone */
+      })
+      .then(refresh);
+  });
 
   // choose a client -> form
   Array.prototype.forEach.call(document.querySelectorAll(".choice"), function (b) {

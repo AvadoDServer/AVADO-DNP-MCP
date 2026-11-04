@@ -67,7 +67,8 @@
   margin-bottom: 0.2rem;
 }
 
-.field input[type="text"] {
+.field input[type="text"],
+.field input.pin {
   font: inherit;
   padding: 0.55rem 0.75rem;
   border-radius: var(--radius-control);
@@ -217,4 +218,32 @@ pre {
 
 .facts dd code {
   overflow-wrap: anywhere;
+}
+
+/* the page PIN */
+.field input.pin {
+  width: 12rem;
+  letter-spacing: 0.2em;
+}
+
+.row.unlocked {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-md);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-md);
+}
+
+.forgot {
+  margin-top: var(--space-lg);
+}
+
+.forgot summary {
+  cursor: pointer;
+  color: rgb(var(--fg-muted));
+}
+
+.forgot[open] summary {
+  margin-bottom: var(--space-md);
 }
