@@ -7,9 +7,10 @@
 # Base images, pinned by digest (the multi-arch index digest). The tag is only
 # a label; the digest decides. Update tag and digest together: get the digest
 # with `docker buildx imagetools inspect node:<tag>` (the "Digest:" line).
-# Same pins as AVADO-DNP-Care and AVADO-DNP-Rocketpool, checked 2026-09-24.
-ARG NODE_IMAGE=node:22.23.2-bookworm@sha256:dd5847a04b0deee391fa145f1f4c6d214196668b6bcc7988ebed67249f226844
-ARG NODE_SLIM_IMAGE=node:22.23.2-bookworm-slim@sha256:48e4b67d85f87bd551df43704e24d252f56cc5f8e9718841aace50f19948f0f9
+# Node 22.23.4 (security release of 2026-10-20), checked 2026-11-04. AVADO-DNP-Care
+# and AVADO-DNP-Rocketpool still pin 22.23.2 until their own bump.
+ARG NODE_IMAGE=node:22.23.4-bookworm@sha256:18a6d90fd60542269850c80ca03b29b1d9b14d6b221ac7ee8e35b0d33ef904bd
+ARG NODE_SLIM_IMAGE=node:22.23.4-bookworm-slim@sha256:4b150b48b4116e2a22f2c39cc27025fbf4f153e2078fd3b14d159fdb5c7279da
 
 ########## Service: install, type-check, test, build
 FROM --platform=linux/amd64 ${NODE_IMAGE} AS service

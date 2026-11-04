@@ -37,6 +37,28 @@ test("an MCP client with a read key lists and calls the read tools", async () =>
   assert.ok(w.activity.list().some((e) => e.tool === "list_apps" && e.who === "SDK client"));
 });
 
+test("tool arguments: the SDK publishes the zod limits as JSON Schema and refuses bad input before the tool runs", async () => {
+  const { main, token, w } = await start();
+  const client = await connect(`${main}/mcp`, { Authorization: `Bearer ${token}` });
+  const logs = (await client.listTools()).tools.find((t) => t.name === "app_logs")!;
+  assert.deepEqual(logs.inputSchema.required, ["app"]);
+  assert.deepEqual(
+    { app: { ...(logs.inputSchema.properties!.app as object), description: undefined }, lines: { ...(logs.inputSchema.properties!.lines as object), description: undefined } },
+    { app: { type: "string", minLength: 1, maxLength: 100, description: undefined }, lines: { type: "integer", minimum: 1, maximum: 500, description: undefined } },
+  );
+  const bad = [{ app: "teku", lines: 9999 }, { app: "teku", lines: 1.5 }, { app: "" }, { app: "x".repeat(101) }, { lines: 1 }, { app: ["teku"] }];
+  for (const args of bad) {
+    const r = (await client.callTool({ name: "app_logs", arguments: args })) as { isError?: boolean; content: Array<{ text: string }> };
+    assert.equal(r.isError, true, JSON.stringify(args));
+    assert.match(r.content[0]!.text, /Invalid arguments/);
+  }
+  const ok = (await client.callTool({ name: "app_logs", arguments: { app: "teku", lines: 5, extra: "dropped" } })) as { isError?: boolean };
+  assert.notEqual(ok.isError, true);
+  await client.close();
+  const calls = w.activity.list().filter((e) => e.tool === "app_logs");
+  assert.equal(calls.length, 1, "only the valid call reached the tool");
+});
+
 test("an install key sees the action tools; calling restart without that scope is refused", async () => {
   const { main, token } = await start(["read", "install"]);
   const client = await connect(`${main}/mcp`, { Authorization: `Bearer ${token}` });
