@@ -192,7 +192,7 @@
           el("p", {
             class: "notice",
             text:
-              "ChatGPT runs on the internet, so it needs a public address for AI Connect. Install the Tailscale app from the AVADO store, log in, and switch on “Share AI Connect on the internet”. Then come back here and make a new ChatGPT key: the steps will include the address.",
+              "ChatGPT runs on the internet, so it needs a public address for AI Connect. Install the Tailscale app from the AVADO store, connect it, and under More options switch on “Share AI Connect on the internet”. Then come back here and make a new ChatGPT key: the steps will include the address.",
           }),
         );
       } else {
@@ -343,9 +343,9 @@
     if (!ts) {
       dd.textContent = "Install the Tailscale app from the AVADO store to use AI Connect from anywhere.";
     } else if (ts.state !== "running") {
-      dd.textContent = "The Tailscale app is installed but not logged in yet. Open it to log in.";
+      dd.textContent = "The Tailscale app is installed but not connected yet. Open it and follow step 1.";
     } else if (!tailscaleUrl()) {
-      dd.textContent = "Open the Tailscale app and switch on “Make AI Connect reachable from my Tailscale devices”.";
+      dd.textContent = "Open the Tailscale app, open More options and switch on “Make AI Connect reachable from my Tailscale devices”.";
     } else {
       dd.appendChild(el("code", { text: tailscaleUrl() }));
       if (publicUrl()) dd.appendChild(el("div", { class: "muted small", text: "Also shared on the internet (for ChatGPT): " + publicUrl() }));
