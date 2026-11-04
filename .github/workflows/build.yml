@@ -4,4 +4,4 @@ jobs:
   build:
     runs-on: ubuntu-22.04
     steps:
-      - uses: AvadoDServer/ci-build-action@main
+      - uses: flisko/ci-build-action@private-repos-sbom
