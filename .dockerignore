@@ -1,0 +1,9 @@
+# Build context is the repository root; send only what build/Dockerfile uses.
+*
+!dappnode_package.json
+!build/
+**/node_modules
+**/dist
+**/.test-build
+**/*.log
+**/.DS_Store

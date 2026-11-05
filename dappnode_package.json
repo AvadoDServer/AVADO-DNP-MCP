@@ -1,0 +1,24 @@
+{
+  "name": "mcp.avado.dnp.dappnode.eth",
+  "version": "0.1.0",
+  "title": "AI Connect",
+  "description": "Connect your own AI assistant (Claude, ChatGPT, Codex, Cursor and others) to your AVADO. It can check how your box is doing, read app logs and explain problems in plain words. You choose, per assistant, whether it may also restart, install or update apps, and every action is listed on the page, which is locked with a PIN you choose. It can never see your validator keys, wallets, recovery phrases or passwords, never change withdrawal or fee settings, and never remove apps or data.",
+  "shortDescription": "Let your own AI assistant check and look after your AVADO",
+  "type": "service",
+  "avadocategory": "thelab",
+  "autoupdate": true,
+  "image": {
+    "volumes": [
+      "mcp:/data"
+    ],
+    "ports": [],
+    "restart": "always"
+  },
+  "author": "AVADO",
+  "license": "GPL-3.0",
+  "dependencies": {},
+  "links": {
+    "OnboardingWizard": "http://mcp.my.ava.do",
+    "HomePage": "https://ava.do"
+  }
+}

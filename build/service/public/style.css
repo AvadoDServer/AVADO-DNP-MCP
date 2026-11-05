@@ -1,0 +1,249 @@
+/* AI Connect page, on top of base.css. Colours come from theme.css (the Admin's tokens). */
+[hidden] {
+  display: none !important;
+}
+.lead {
+  margin-top: var(--space-sm);
+  color: rgb(var(--fg-muted));
+}
+
+.never {
+  margin: var(--space-md) 0 0;
+  padding-left: 1.2rem;
+  display: grid;
+  gap: 0.3rem;
+  font-size: 0.95rem;
+}
+
+.small {
+  font-size: 0.88rem;
+}
+
+.attention {
+  border-color: rgb(var(--warning));
+  background: rgb(var(--verdict-warn));
+}
+
+.choices {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: var(--space-sm);
+  margin-top: var(--space-md);
+}
+
+.choice {
+  font: inherit;
+  font-weight: 600;
+  padding: 0.8rem 0.6rem;
+  border-radius: var(--radius-control);
+  border: 1px solid rgb(var(--border));
+  background: rgb(var(--surface-raised));
+  color: rgb(var(--fg));
+  cursor: pointer;
+}
+
+.choice:hover,
+.choice[aria-pressed="true"] {
+  border-color: rgb(var(--accent));
+}
+
+.form {
+  margin-top: var(--space-lg);
+  display: grid;
+  gap: var(--space-md);
+}
+
+.field {
+  display: grid;
+  gap: 0.35rem;
+  border: 0;
+  padding: 0;
+  margin: 0;
+}
+
+.field > span,
+.field legend {
+  font-weight: 600;
+  margin-bottom: 0.2rem;
+}
+
+.field input[type="text"],
+.field input.pin {
+  font: inherit;
+  padding: 0.55rem 0.75rem;
+  border-radius: var(--radius-control);
+  border: 1px solid rgb(var(--border));
+  background: rgb(var(--bg-inset));
+  color: rgb(var(--fg));
+  max-width: 100%;
+}
+
+.check {
+  display: flex;
+  gap: 0.5rem;
+  align-items: flex-start;
+}
+
+.check input {
+  margin-top: 0.3rem;
+}
+
+.check.sub {
+  margin-left: 1.5rem;
+  color: rgb(var(--fg-muted));
+}
+
+.button.ghost {
+  background: transparent;
+  color: rgb(var(--fg));
+  border: 1px solid rgb(var(--border));
+}
+
+.button.ghost:hover {
+  background: rgb(var(--surface-hover));
+}
+
+.button.small {
+  padding: 0.35rem 0.8rem;
+  font-size: 0.9rem;
+}
+
+.button.danger {
+  background: rgb(var(--danger));
+  color: #fff;
+}
+
+.made {
+  margin-top: var(--space-lg);
+  display: grid;
+  gap: var(--space-md);
+}
+
+.notice.ok {
+  background: rgb(var(--verdict-ok));
+  color: rgb(var(--fg));
+}
+
+.copyrow {
+  display: flex;
+  gap: var(--space-sm);
+  align-items: flex-start;
+}
+
+code,
+pre {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.85rem;
+}
+
+.copyrow code,
+pre {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  background: rgb(var(--bg-inset));
+  border: 1px solid rgb(var(--border));
+  border-radius: var(--radius-control);
+  padding: 0.5rem 0.7rem;
+  margin: 0;
+}
+
+.steps {
+  margin: 0;
+  padding-left: 1.3rem;
+  display: grid;
+  gap: var(--space-sm);
+}
+
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-sm);
+}
+
+.list li {
+  border: 1px solid rgb(var(--border));
+  border-radius: var(--radius-control);
+  padding: var(--space-sm) var(--space-md);
+  background: rgb(var(--surface-raised));
+  display: grid;
+  gap: 0.3rem;
+}
+
+.list .row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  align-items: center;
+}
+
+.list .name {
+  font-weight: 600;
+}
+
+.tag {
+  display: inline-block;
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 0.05rem 0.5rem;
+  border-radius: var(--radius-full);
+  background: rgb(var(--bg-inset));
+  color: rgb(var(--fg-muted));
+  margin-right: 0.3rem;
+}
+
+.activity li {
+  grid-template-columns: 1fr;
+  font-size: 0.92rem;
+}
+
+.activity li[data-outcome="refused"],
+.activity li[data-outcome="error"],
+.activity li[data-outcome="declined"] {
+  border-left: 4px solid rgb(var(--warning));
+}
+
+.activity li[data-outcome="ok"],
+.activity li[data-outcome="started"] {
+  border-left: 4px solid rgb(var(--success));
+}
+
+.activity li[data-outcome="waiting"] {
+  border-left: 4px solid rgb(var(--accent));
+}
+
+.facts dd code {
+  overflow-wrap: anywhere;
+}
+
+/* the page PIN */
+.field input.pin {
+  width: 12rem;
+  letter-spacing: 0.2em;
+}
+
+.row.unlocked {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-md);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-md);
+}
+
+.forgot {
+  margin-top: var(--space-lg);
+}
+
+.forgot summary {
+  cursor: pointer;
+  color: rgb(var(--fg-muted));
+}
+
+.forgot[open] summary {
+  margin-bottom: var(--space-md);
+}

@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AVADO AI Connect</title>
+    <link rel="icon" href="/favicon.png" />
+    <link rel="stylesheet" href="/theme.css" />
+    <link rel="stylesheet" href="/base.css" />
+    <link rel="stylesheet" href="/style.css" />
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <main class="shell">
+      <header class="top">
+        <span class="brand">AVADO <strong>AI Connect</strong></span>
+        <span class="version" id="version"></span>
+      </header>
+
+      <section class="card">
+        <h1>Let your own AI assistant look after your AVADO</h1>
+        <p class="lead">
+          Connect Claude, ChatGPT, Codex, Cursor or another assistant to this box. It can check how the box is doing, read app logs and
+          explain problems in plain words. You decide, per assistant, whether it may also restart, install or update apps.
+        </p>
+        <ul class="never">
+          <li>It can <strong>never</strong> see your validator keys or their passwords, wallets or recovery phrases, or your Admin password.</li>
+          <li>It can <strong>never</strong> change withdrawal or fee settings, remove apps or data, or run commands on the box.</li>
+          <li>Logs are filtered: anything that looks like a key, password or recovery phrase is hidden before your assistant sees it.</li>
+        </ul>
+      </section>
+
+      <section class="card" id="pin-card" hidden aria-live="polite">
+        <div id="pin-new" hidden>
+          <h2>Choose a PIN for this page</h2>
+          <p class="muted">
+            This page makes the keys your assistants use. A PIN makes sure only you can make or remove them, give an assistant more rights, or
+            read what your assistants did. Choose at least 6 digits you will remember. Your assistants never need this PIN.
+          </p>
+          <form class="form" id="pin-new-form">
+            <label class="field">
+              <span>New PIN</span>
+              <input type="password" id="pin-new-1" class="pin" inputmode="numeric" autocomplete="new-password" minlength="6" maxlength="12" pattern="[0-9]*" required />
+            </label>
+            <label class="field">
+              <span>The same PIN again</span>
+              <input type="password" id="pin-new-2" class="pin" inputmode="numeric" autocomplete="new-password" minlength="6" maxlength="12" pattern="[0-9]*" required />
+            </label>
+            <div class="actions">
+              <button type="submit" class="button" id="pin-new-button">Save the PIN</button>
+              <span class="muted" id="pin-new-msg" role="status"></span>
+            </div>
+          </form>
+        </div>
+
+        <div id="pin-enter" hidden>
+          <h2>Enter your PIN</h2>
+          <p class="notice" id="pin-waiting" hidden></p>
+          <p class="muted small" id="pin-slow" hidden>Many wrong PINs were tried on this AVADO in the last hour, so each try takes a few seconds.</p>
+          <form class="form" id="pin-enter-form">
+            <label class="field">
+              <span>PIN</span>
+              <input type="password" id="pin-value" class="pin" inputmode="numeric" autocomplete="current-password" maxlength="12" pattern="[0-9]*" required />
+            </label>
+            <div class="actions">
+              <button type="submit" class="button" id="pin-enter-button">Unlock</button>
+              <span class="muted" id="pin-enter-msg" role="status"></span>
+            </div>
+          </form>
+          <details class="forgot" id="pin-forgot">
+            <summary>Forgot your PIN?</summary>
+            <div id="pin-reset-closed">
+              <ol class="steps">
+                <li>Open the AVADO Admin (my.ava.do), go to AI Connect and press <strong>Restart</strong>.</li>
+                <li>Come back to this page within 10 minutes. A “Reset the PIN” button appears here.</li>
+              </ol>
+              <p class="muted small">
+                Resetting removes all your connections: their keys stop working and you connect your assistants again. Your box, apps and data
+                are not touched. This way nobody else can use a reset to reach your assistants.
+              </p>
+            </div>
+            <div id="pin-reset-open" hidden>
+              <p>
+                AI Connect was just restarted from the Admin, so you can reset the PIN now (until <span id="pin-reset-until"></span>). This removes
+                all your connections: their keys stop working. Then you choose a new PIN and connect your assistants again.
+              </p>
+              <div class="actions">
+                <button type="button" class="button danger" id="pin-reset-button">Reset the PIN and remove all connections</button>
+                <span class="muted" id="pin-reset-msg" role="status"></span>
+              </div>
+            </div>
+          </details>
+        </div>
+      </section>
+
+      <section class="card attention needs-pin" id="approvals" hidden aria-live="polite">
+        <h2>Your assistant is waiting for your OK</h2>
+        <ul class="list" id="approval-list"></ul>
+      </section>
+
+      <section class="card needs-pin" hidden>
+        <div class="row unlocked">
+          <span class="muted small" id="pin-session">The page is unlocked.</span>
+          <button type="button" class="button small ghost" id="pin-lock">Lock the page</button>
+        </div>
+        <h2>Connect an assistant</h2>
+        <p class="muted">Pick the one you use. You get a private key and the exact steps to paste into it.</p>
+        <div class="choices" id="client-choices">
+          <button type="button" class="choice" data-client="claude-code">Claude Code</button>
+          <button type="button" class="choice" data-client="claude-desktop">Claude Desktop</button>
+          <button type="button" class="choice" data-client="chatgpt">ChatGPT</button>
+          <button type="button" class="choice" data-client="codex">Codex</button>
+          <button type="button" class="choice" data-client="cursor">Cursor</button>
+          <button type="button" class="choice" data-client="other">Other</button>
+        </div>
+
+        <form class="form" id="create-form" hidden>
+          <label class="field">
+            <span>Name for this connection</span>
+            <input type="text" id="token-name" maxlength="60" required />
+          </label>
+          <fieldset class="field">
+            <legend>What may it do?</legend>
+            <label class="check"><input type="checkbox" checked disabled /> Look at the box: health, apps, logs, sync, the store (always on)</label>
+            <label class="check"><input type="checkbox" id="scope-restart" /> Restart apps</label>
+            <label class="check"><input type="checkbox" id="scope-install" /> Install and update apps from the AVADO store</label>
+            <label class="check sub"
+              ><input type="checkbox" id="confirm-actions" checked /> Ask me on this page before it restarts, installs or updates anything
+              (recommended)</label
+            >
+          </fieldset>
+          <div class="actions">
+            <button type="submit" class="button" id="create-button">Create the key</button>
+            <button type="button" class="button ghost" id="create-cancel">Cancel</button>
+            <span class="muted" id="create-msg" role="status"></span>
+          </div>
+        </form>
+
+      </section>
+
+      <!-- outside the PIN-locked cards: a key that was just made stays on screen until Done, even if the page locks -->
+      <section class="card made" id="made" hidden>
+        <p class="notice ok">
+          Your key is ready. <strong>Copy it now:</strong> it is shown only this once. Anyone with this key can do what you allowed, so keep it
+          private.
+        </p>
+        <div class="copyrow">
+          <code id="made-key"></code>
+          <button type="button" class="button small" data-copy="made-key">Copy key</button>
+        </div>
+        <div id="made-steps"></div>
+        <div class="actions"><button type="button" class="button ghost" id="made-done">Done</button></div>
+      </section>
+
+      <section class="card needs-pin" hidden>
+        <h2>Your connections</h2>
+        <p class="muted" id="tokens-empty">No assistant is connected yet.</p>
+        <ul class="list" id="token-list"></ul>
+      </section>
+
+      <section class="card needs-pin" hidden>
+        <h2>What your assistants did</h2>
+        <p class="muted" id="activity-empty">Nothing yet.</p>
+        <ul class="list activity" id="activity-list"></ul>
+      </section>
+
+      <section class="card">
+        <h2>Where your assistant can reach AI Connect</h2>
+        <dl class="facts">
+          <div>
+            <dt>On your AVADO network</dt>
+            <dd><code id="url-local">https://mcp.my.ava.do/mcp</code></dd>
+          </div>
+          <div>
+            <dt>Through Tailscale</dt>
+            <dd id="url-tailscale">Install the Tailscale app from the AVADO store to use AI Connect from anywhere.</dd>
+          </div>
+        </dl>
+        <p class="muted small">
+          The first address works on computers connected to your AVADO through AVADO Remote Access or the AVADO WiFi. ChatGPT, and Claude on the
+          web, run on the internet and cannot reach your home network: for them, switch on “Share AI Connect on the internet” in the Tailscale
+          app (under More options). That gives AI Connect a public address; only someone with one of your keys can use it, and the key page you are reading now is
+          never shared.
+        </p>
+        <p class="muted small" id="https-state"></p>
+      </section>
+
+      <p class="privacy">
+        AI Connect runs only on your AVADO. It sends nothing to AVADO. What your assistant reads goes to the company that runs the assistant
+        (Anthropic, OpenAI, …) under your account with them.
+      </p>
+    </main>
+  </body>
+</html>

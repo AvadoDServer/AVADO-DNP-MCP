@@ -1,0 +1,12 @@
+version: '3.4'
+services:
+  mcp.avado.dnp.dappnode.eth:
+    image: 'mcp.avado.dnp.dappnode.eth:0.1.0'
+    build:
+      context: .
+      dockerfile: build/Dockerfile
+    volumes:
+      - 'mcp:/data'
+    restart: always
+volumes:
+  mcp: {}
