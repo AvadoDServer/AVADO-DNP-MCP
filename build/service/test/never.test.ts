@@ -80,6 +80,7 @@ test("the tool list is exactly the read tools and the three safe actions", () =>
       "ethereum_status:read",
       "store_apps:read",
       "action_status:read",
+      "validate_package:read",
       "restart_app:restart",
       "install_app:install",
       "update_app:install",

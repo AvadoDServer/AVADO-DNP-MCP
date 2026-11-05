@@ -5,8 +5,7 @@
 import assert from "node:assert/strict";
 import http from "node:http";
 import { after, test } from "node:test";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { defaultLimits } from "../src/http.js";
 import { RateLimiter } from "../src/ratelimit.js";
 import { servers, setPin, startHttp } from "./helpers.js";
@@ -29,7 +28,7 @@ test("an MCP client with a read key lists and calls the read tools", async () =>
   const { tools } = await client.listTools();
   assert.deepEqual(
     tools.map((t) => t.name),
-    ["box_overview", "list_apps", "health_check", "app_logs", "ethereum_status", "store_apps", "action_status"],
+    ["box_overview", "list_apps", "health_check", "app_logs", "ethereum_status", "store_apps", "action_status", "validate_package"],
   );
   const res = (await client.callTool({ name: "list_apps", arguments: {} })) as { content: Array<{ text: string }> };
   assert.match(res.content[0]!.text, /teku\.avado\.dnp\.dappnode\.eth/);
@@ -64,7 +63,8 @@ test("an install key sees the action tools; calling restart without that scope i
   const client = await connect(`${main}/mcp`, { Authorization: `Bearer ${token}` });
   const names = (await client.listTools()).tools.map((t) => t.name);
   assert.ok(names.includes("install_app") && names.includes("update_app") && !names.includes("restart_app"));
-  const r = (await client.callTool({ name: "restart_app", arguments: { app: "teku" } })) as { isError?: boolean };
+  // SDK v2 answers a tool that is not registered for this key with a protocol error (-32602)
+  const r = (await client.callTool({ name: "restart_app", arguments: { app: "teku" } }).catch((e: Error) => ({ isError: true, message: e.message }))) as { isError?: boolean };
   assert.equal(r.isError, true);
   await client.close();
 });
