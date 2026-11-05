@@ -93,6 +93,11 @@
         </div>
       </section>
 
+      <section class="card attention needs-pin" id="connects" hidden aria-live="polite">
+        <h2>An app wants to connect</h2>
+        <ul class="list" id="connect-list"></ul>
+      </section>
+
       <section class="card attention needs-pin" id="approvals" hidden aria-live="polite">
         <h2>Your assistant is waiting for your OK</h2>
         <ul class="list" id="approval-list"></ul>
@@ -109,6 +114,7 @@
           <button type="button" class="choice" data-client="claude-code">Claude Code</button>
           <button type="button" class="choice" data-client="claude-desktop">Claude Desktop</button>
           <button type="button" class="choice" data-client="chatgpt">ChatGPT</button>
+          <button type="button" class="choice" data-client="claude-web">Claude on the web</button>
           <button type="button" class="choice" data-client="codex">Codex</button>
           <button type="button" class="choice" data-client="cursor">Cursor</button>
           <button type="button" class="choice" data-client="other">Other</button>
@@ -136,6 +142,16 @@
           </div>
         </form>
 
+        <div class="made" id="web-steps" hidden></div>
+      </section>
+
+      <section class="card needs-pin" id="changes-card" hidden>
+        <div class="switch-row">
+          <h2>Allow changes</h2>
+          <label class="switch"><input type="checkbox" id="allow-changes" role="switch" /><span id="allow-changes-word">Off</span></label>
+        </div>
+        <p class="muted" id="allow-changes-text">Off: your assistants can only look. Switch on to let the assistants you allowed restart, install and update apps.</p>
+        <ul class="list activity changes" id="changes-list"></ul>
       </section>
 
       <!-- outside the PIN-locked cards: a key that was just made stays on screen until Done, even if the page locks -->
@@ -179,7 +195,7 @@
         <p class="muted small">
           The first address works on computers connected to your AVADO through AVADO Remote Access or the AVADO WiFi. ChatGPT, and Claude on the
           web, run on the internet and cannot reach your home network: for them, switch on “Share AI Connect on the internet” in the Tailscale
-          app (under More options). That gives AI Connect a public address; only someone with one of your keys can use it, and the key page you are reading now is
+          app (under More options). That gives AI Connect a public address; only apps you allowed on this page can use it, and this page is
           never shared.
         </p>
         <p class="muted small" id="https-state"></p>
