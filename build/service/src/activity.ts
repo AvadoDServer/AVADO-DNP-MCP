@@ -21,6 +21,13 @@ export interface ActivityEntry {
   outcome: Outcome;
   /** one plain-language sentence */
   detail?: string;
+  /**
+   * For changes (restart, install, update, the Allow changes switch): the whole entry as one plain
+   * sentence for the page, e.g. "Claude Code restarted Teku."
+   */
+  says?: string;
+  /** the entry is about a change to the box (shown under "Allow changes" on the page) */
+  change?: boolean;
   ms?: number;
 }
 
@@ -49,6 +56,7 @@ export class ActivityLog {
       at: new Date(this.now()).toISOString(),
       ...entry,
       ...(entry.detail ? { detail: redact(entry.detail).slice(0, 300) } : {}),
+      ...(entry.says ? { says: redact(entry.says).slice(0, 300) } : {}),
       ...(entry.target ? { target: entry.target.slice(0, 120) } : {}),
     };
     this.entries.push(e);
@@ -60,6 +68,13 @@ export class ActivityLog {
   /** Newest first. */
   list(limit = 200): ActivityEntry[] {
     return this.entries.slice(-limit).reverse();
+  }
+
+  /** The newest changes (restart, install, update, the switch), newest first. */
+  changes(limit = 20): ActivityEntry[] {
+    const out: ActivityEntry[] = [];
+    for (let i = this.entries.length - 1; i >= 0 && out.length < limit; i--) if (this.entries[i]!.change) out.push(this.entries[i]!);
+    return out;
   }
 
   private scheduleSave() {

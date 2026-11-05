@@ -60,6 +60,7 @@ RUN node -e 'const v = require("/tmp/dappnode_package.json").version; \
     && test -f /usr/src/service/dist/server.js \
     && test -f /usr/src/service/dist/admin/health/engine.js \
     && test -f /usr/src/service/public/index.html \
+    && test -f /usr/src/service/public/connect.html \
     && test -f /usr/src/service/dist/tools.js \
     && mkdir -p /data && chown node:node /data
 

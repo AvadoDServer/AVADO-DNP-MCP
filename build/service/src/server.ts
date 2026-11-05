@@ -8,7 +8,9 @@ import { CertManager, type CertPair } from "./certs.js";
 import { loadConfig } from "./config.js";
 import { createAgentApp, createApp, defaultLimits, type AppDeps } from "./http.js";
 import { createLogger, errorMessage } from "./log.js";
+import { OAuthServer } from "./oauth.js";
 import { PinGuard, ownerRestarted, removeKeysWithoutPin } from "./pin.js";
+import { Settings } from "./settings.js";
 import { TokenStore } from "./tokens.js";
 import { WampClient } from "./wamp.js";
 
@@ -25,7 +27,9 @@ const activity = new ActivityLog(path.join(config.stateDir, "activity.json"));
 // (a new container with the same version; see ownerRestarted in pin.ts).
 const resetOpen = await ownerRestarted(config.containerMarker, path.join(config.stateDir, "last-version"), config.version);
 const pin = new PinGuard(path.join(config.stateDir, "pin.json"), { startedAt: Date.now(), resetOpen });
-const [, , pinFile] = await Promise.all([tokens.load(), activity.load(), pin.load()]);
+const settings = new Settings(path.join(config.stateDir, "settings.json"));
+const oauth = new OAuthServer({ file: path.join(config.stateDir, "oauth.json"), tokens, activity, logger, fetch: (input, init) => fetch(input, init) });
+const [, , pinFile] = await Promise.all([tokens.load(), activity.load(), pin.load(), settings.load(), oauth.load()]);
 // No PIN means no keys: the page now asks for a new PIN, and whoever chooses it must not find the
 // owner's keys (a damaged pin.json, or a reset that could not finish).
 const removed = await removeKeysWithoutPin(pin, tokens);
@@ -53,6 +57,8 @@ const deps: AppDeps = {
   activity,
   approvals: new Approvals(),
   pin,
+  settings,
+  oauth,
   fetch: (input, init) => fetch(input, init),
   httpsInfo: () => ({ on: httpsServer !== null && httpsServer.listening, validTo: certValidTo }),
 };
@@ -101,12 +107,14 @@ if (config.httpsPort) {
   certs.start();
 }
 
-logger.info(`AVADO AI Connect ${config.version} started; ${tokens.list().length} connection(s); page PIN ${pin.isSet() ? "set" : "not set yet"}`);
+logger.info(
+  `AVADO AI Connect ${config.version} started; ${tokens.list().length} connection(s); page PIN ${pin.isSet() ? "set" : "not set yet"}; changes ${settings.allowChanges ? "allowed" : "switched off"}`,
+);
 
 function shutdown(signal: string): void {
   logger.info(`${signal} received, shutting down`);
   certs.stop();
-  void Promise.all([activity.flush(), tokens.flush()]).finally(() => process.exit(0));
+  void Promise.all([activity.flush(), tokens.flush(), oauth.flush()]).finally(() => process.exit(0));
   setTimeout(() => process.exit(0), 3000).unref();
 }
 process.on("SIGTERM", () => shutdown("SIGTERM"));

@@ -39,6 +39,16 @@ export interface Config {
   trustedProxies: string[];
   /** Origins a browser-based MCP client may call /mcp from (all others are refused, MCP spec). */
   allowedOrigins: string[];
+  /**
+   * Where the page and /mcp are on the AVADO network, as an OAuth issuer and resource base (MCP
+   * spec: the sign-in endpoints are https). Tests point it at their own listener.
+   */
+  localBase: string;
+  /**
+   * The same for the agent-only port. Empty: taken from the X-Forwarded-Host the Tailscale relay
+   * sends (the box's Tailscale name), so the Connect button works on the Tailscale address too.
+   */
+  agentBase: string;
   /** How long an action that needs the owner's OK waits for a click on the page. */
   approvalTimeoutMs: number;
   /** How long an install/update tool call waits before it answers "still running". */
@@ -109,6 +119,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     allowedHostnames: [...DEFAULT_ALLOWED_HOSTNAMES, ...list(env, "EXTRA_ALLOWED_HOSTNAMES")],
     trustedProxies: [],
     allowedOrigins: ["http://mcp.my.ava.do", "https://mcp.my.ava.do", ...list(env, "EXTRA_ALLOWED_ORIGINS")],
+    localBase: url(env, "LOCAL_BASE_URL", "https://mcp.my.ava.do"),
+    agentBase: env.AGENT_BASE_URL ? url(env, "AGENT_BASE_URL", "") : "",
     approvalTimeoutMs: num(env, "APPROVAL_TIMEOUT_MS", 120_000),
     installWaitMs: num(env, "INSTALL_WAIT_MS", 45_000),
     version: readVersion(env),
