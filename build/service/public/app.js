@@ -17,6 +17,7 @@
     "claude-code": "Claude Code",
     "claude-desktop": "Claude Desktop",
     chatgpt: "ChatGPT",
+    "claude-web": "Claude",
     codex: "Codex",
     cursor: "Cursor",
     other: "My assistant",
@@ -30,6 +31,9 @@
     ethereum_status: "looked at node sync and peers",
     store_apps: "looked at the AVADO store",
     action_status: "checked install progress",
+    validate_package: "checked a package being made",
+    "connect request": "asked to connect",
+    "allow changes": "changes switch",
     restart_app: "restart an app",
     install_app: "install an app",
     update_app: "update an app",
@@ -42,7 +46,10 @@
     "pin reset": "PIN reset",
   };
 
-  var PAGE_TOOLS = { "pin set": 1, "wrong pin": 1, "pin reset": 1 };
+  var PAGE_TOOLS = { "pin set": 1, "wrong pin": 1, "pin reset": 1, "allow changes": 1 };
+
+  /** Apps that sign in with the Connect button (no key): ChatGPT and Claude on the web. */
+  var WEB_CLIENTS = { chatgpt: 1, "claude-web": 1 };
 
   var OUTCOME_WORDS = {
     ok: "Done",
@@ -185,27 +192,6 @@
           "Save the file, quit Claude Desktop completely and open it again. Then ask: “How is my AVADO doing?”",
         ]),
       );
-    } else if (client === "chatgpt") {
-      var pub = publicUrl();
-      if (!pub) {
-        box.appendChild(
-          el("p", {
-            class: "notice",
-            text:
-              "ChatGPT runs on the internet, so it needs a public address for AI Connect. Install the Tailscale app from the AVADO store, connect it, and under More options switch on “Share AI Connect on the internet”. Then come back here and make a new ChatGPT key: the steps will include the address.",
-          }),
-        );
-      } else {
-        box.appendChild(
-          steps([
-            "In ChatGPT open Settings, then Apps & Connectors, then Advanced settings, and switch on Developer mode.",
-            "Go back to Apps & Connectors and choose Create (or Add a connector).",
-            "Name: AVADO. Authentication: No authentication (the key is part of the address below).",
-            ["Connector URL: paste this private address. It contains your key, so do not share it.", codeBlock(linkWithKey(pub, key))],
-            "Save, then in a new chat turn on the AVADO connector and ask: “How is my AVADO doing?”",
-          ]),
-        );
-      }
     } else if (client === "codex") {
       box.appendChild(
         steps([
@@ -232,6 +218,93 @@
     }
     box.appendChild(el("p", { class: "muted small", text: where }));
     return box;
+  }
+
+  /** ChatGPT and Claude on the web: no key; the app's Connect button and an Allow on this page. */
+  function webStepsFor(client) {
+    var box = el("div", { class: "made-steps" });
+    var pub = publicUrl();
+    var name = CLIENT_NAMES[client];
+    if (!pub) {
+      box.appendChild(
+        el("p", {
+          class: "notice",
+          text:
+            name +
+            " runs on the internet, so it needs a public address for AI Connect. Install the Tailscale app from the AVADO store, connect it, and under More options switch on “Share AI Connect on the internet”. Then come back here.",
+        }),
+      );
+      return box;
+    }
+    var add =
+      client === "chatgpt"
+        ? "In ChatGPT open Settings, then Apps & Connectors, and choose Create (under Advanced settings, Developer mode may have to be on)."
+        : "In Claude open Settings, then Connectors, and choose Add custom connector.";
+    box.appendChild(
+      steps([
+        add,
+        ["Name: AVADO. Address (URL):", codeBlock(pub)],
+        "Press Connect" + (client === "chatgpt" ? " (Authentication: OAuth)" : "") + ". A page “Approve on your AVADO” opens with a code.",
+        "Come back to this page, check the code and press Allow. Then ask: “How is my AVADO doing?”",
+      ]),
+    );
+    box.appendChild(el("p", { class: "muted small", text: "No key to copy: you allow the app here, and you can remove it here at any time." }));
+    return box;
+  }
+
+  function renderConnects() {
+    var list = $("connect-list");
+    list.textContent = "";
+    var items = (state && state.connects) || [];
+    $("connects").hidden = items.length === 0;
+    items.forEach(function (c) {
+      var allow = el("button", { type: "button", class: "button", text: "Allow" });
+      var deny = el("button", { type: "button", class: "button ghost", text: "Don't allow" });
+      function decide(decision) {
+        allow.disabled = deny.disabled = true;
+        api("POST", "/api/connect/" + c.id, { decision: decision })
+          .catch(function (e) {
+            alert(e.message);
+          })
+          .then(refresh);
+      }
+      allow.addEventListener("click", function () {
+        decide("allow");
+      });
+      deny.addEventListener("click", function () {
+        decide("deny");
+      });
+      var children = [
+        el("div", { class: "row" }, [el("span", { class: "name", text: c.name + " wants to connect to your AVADO" })]),
+        el("p", { class: "code-big", text: c.code }),
+        el("span", { class: "muted small", text: "Allow only if you just pressed Connect and your app shows this code. It goes back to " + c.redirectHost + "." }),
+      ];
+      if (c.local) {
+        children.push(el("span", { class: "notice small", text: "This app runs on a computer, not on a website: any program on that computer could have started this. Allow it only if you started it yourself." }));
+      }
+      children.push(el("span", { class: "muted small", text: "It can look at your box, and make changes only while “Allow changes” is on. Waits until " + when(c.expiresAt) + "." }));
+      children.push(el("div", { class: "actions" }, [allow, deny]));
+      list.appendChild(el("li", null, children));
+    });
+  }
+
+  function renderChanges() {
+    var on = !!(state && state.allowChanges);
+    var box = $("allow-changes");
+    if (document.activeElement !== box) box.checked = on;
+    $("allow-changes-word").textContent = on ? "On" : "Off";
+    $("allow-changes-text").textContent = on
+      ? "On: the assistants you allowed may restart, install and update apps. Every change is listed here."
+      : "Off: your assistants can only look. Switch on to let the assistants you allowed restart, install and update apps.";
+    var list = $("changes-list");
+    list.textContent = "";
+    ((state && state.changes) || []).forEach(function (c) {
+      list.appendChild(
+        el("li", { "data-outcome": c.outcome }, [
+          el("div", { class: "row" }, [el("span", { text: c.says || c.detail || c.tool }), el("span", { class: "muted small", text: when(c.at) })]),
+        ]),
+      );
+    });
   }
 
   function scopeWords(scopes) {
@@ -281,7 +354,7 @@
     tokens.forEach(function (t) {
       var remove = el("button", { type: "button", class: "button small ghost", text: "Remove" });
       remove.addEventListener("click", function () {
-        if (!confirm("Remove “" + t.name + "”? Its key stops working right away.")) return;
+        if (!confirm("Remove “" + t.name + "”? " + (t.oauth ? "It is signed out right away." : "Its key stops working right away."))) return;
         remove.disabled = true;
         api("POST", "/api/tokens/" + t.id + "/revoke")
           .catch(function (e) {
@@ -301,7 +374,15 @@
             }),
           ),
         ),
-        el("span", { class: "muted small", text: "Made " + ago(t.createdAt) + " · last used " + ago(t.lastUsedAt) + " · key starts with " + t.hint + "…" }),
+        el("span", {
+          class: "muted small",
+          text:
+            "Made " +
+            ago(t.createdAt) +
+            " · last used " +
+            ago(t.lastUsedAt) +
+            (t.oauth ? " · connected with the Connect button, goes back to " + t.oauth.redirectHost : " · key starts with " + t.hint + "…"),
+        }),
       ];
       if (hasActions) {
         var box = el("input", { type: "checkbox" });
@@ -326,11 +407,11 @@
     $("activity-empty").hidden = items.length > 0;
     items.slice(0, 60).forEach(function (a) {
       var what = TOOL_WORDS[a.tool] || a.tool;
-      var line = (a.who || (PAGE_TOOLS[a.tool] ? "This page" : "Unknown")) + ": " + what + (a.target ? " (" + a.target + ")" : "");
+      var line = a.says || (a.who || (PAGE_TOOLS[a.tool] ? "This page" : "Unknown")) + ": " + what + (a.target ? " (" + a.target + ")" : "");
       list.appendChild(
         el("li", { "data-outcome": a.outcome }, [
           el("div", { class: "row" }, [el("span", { text: line }), el("span", { class: "muted small", text: when(a.at) })]),
-          el("span", { class: "muted small", text: (OUTCOME_WORDS[a.outcome] || a.outcome) + (a.detail ? ". " + a.detail : "") }),
+          a.says ? null : el("span", { class: "muted small", text: (OUTCOME_WORDS[a.outcome] || a.outcome) + (a.detail ? ". " + a.detail : "") }),
         ]),
       );
     });
@@ -368,7 +449,7 @@
     var p = state.pin || { set: false, unlocked: false };
     var unlocked = !!p.unlocked;
     Array.prototype.forEach.call(document.querySelectorAll(".needs-pin"), function (sec) {
-      if (sec.id !== "approvals") sec.hidden = !unlocked;
+      if (sec.id !== "approvals" && sec.id !== "connects") sec.hidden = !unlocked;
     });
     $("pin-card").hidden = unlocked;
     $("pin-new").hidden = unlocked || p.set;
@@ -381,9 +462,13 @@
     }
     $("create-form").hidden = true;
     var waiting = state.waiting || 0;
-    $("pin-waiting").hidden = !p.set || waiting === 0;
-    $("pin-waiting").textContent =
-      waiting === 1 ? "Your assistant is waiting for your OK. Enter your PIN to see what it wants to do." : waiting + " requests from your assistants wait for your OK. Enter your PIN to see them.";
+    var connecting = state.waitingConnects || 0;
+    $("pin-waiting").hidden = !p.set || waiting + connecting === 0;
+    $("pin-waiting").textContent = connecting
+      ? "An app wants to connect to your AVADO. Enter your PIN to allow it."
+      : waiting === 1
+        ? "Your assistant is waiting for your OK. Enter your PIN to see what it wants to do."
+        : waiting + " requests from your assistants wait for your OK. Enter your PIN to see them.";
     var wait = p.retryAfter || 0;
     $("pin-enter-button").disabled = wait > 0;
     if (wait > 0) $("pin-enter-msg").textContent = waitWords(wait);
@@ -404,8 +489,11 @@
     renderUrls();
     if (!(state.pin && state.pin.unlocked)) {
       $("approvals").hidden = true;
+      $("connects").hidden = true;
       return;
     }
+    renderConnects();
+    renderChanges();
     renderApprovals();
     renderTokens();
     renderActivity();
@@ -506,7 +594,14 @@
         x.setAttribute("aria-pressed", x === b ? "true" : "false");
       });
       $("made").hidden = true;
-      $("create-form").hidden = false;
+      var web = !!WEB_CLIENTS[chosenClient];
+      $("create-form").hidden = web;
+      $("web-steps").hidden = !web;
+      $("web-steps").textContent = "";
+      if (web) {
+        $("web-steps").appendChild(webStepsFor(chosenClient));
+        return;
+      }
       $("token-name").value = (CLIENT_NAMES[chosenClient] || "My assistant") + " on my computer";
       $("create-msg").textContent = "";
       $("token-name").focus();
@@ -547,6 +642,25 @@
     $("made").hidden = true;
     $("made-key").textContent = "";
     $("made-steps").textContent = "";
+  });
+
+  $("allow-changes").addEventListener("change", function () {
+    var box = $("allow-changes");
+    var on = box.checked;
+    if (on && !confirm("Allow changes? The assistants you allowed may then restart, install and update apps. Every change is listed on this page.")) {
+      box.checked = false;
+      return;
+    }
+    box.disabled = true;
+    api("POST", "/api/settings", { allowChanges: on })
+      .catch(function (e) {
+        alert(e.message);
+      })
+      .then(function () {
+        box.disabled = false;
+        box.blur();
+        return refresh();
+      });
   });
 
   // copy buttons (also inside generated steps)

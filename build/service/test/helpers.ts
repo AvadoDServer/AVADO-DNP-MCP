@@ -9,8 +9,10 @@ import { Box } from "../src/box.js";
 import { loadConfig, type Config } from "../src/config.js";
 import { createAgentApp, createApp, defaultLimits, type AppDeps, type Limits } from "../src/http.js";
 import { silentLogger } from "../src/log.js";
+import { OAuthServer } from "../src/oauth.js";
 import { PinGuard, type PinOptions } from "../src/pin.js";
 import { RateLimiter } from "../src/ratelimit.js";
+import { Settings } from "../src/settings.js";
 import { TokenStore, type Scope, type TokenRecord } from "../src/tokens.js";
 import type { ToolContext } from "../src/tools.js";
 import { WampError, type EventHandler, type WampSession } from "../src/wamp.js";
@@ -163,7 +165,7 @@ export const STORE = [
   storeEntry("goerli-geth.avado.dnp.dappnode.eth", "10.4.52", { avadocategory: "testnets" }, 5),
 ];
 
-export function makeWorld(opts: { scopes?: Scope[]; confirm?: boolean; handlers?: Record<string, Handler> } = {}) {
+export function makeWorld(opts: { scopes?: Scope[]; confirm?: boolean; handlers?: Record<string, Handler>; allowChanges?: boolean } = {}) {
   const config = testConfig();
   const wamps: FakeWamp[] = [];
   const handlers = opts.handlers ?? dappmanagerHandlers(PACKAGES);
@@ -180,6 +182,9 @@ export function makeWorld(opts: { scopes?: Scope[]; confirm?: boolean; handlers?
   const activity = new ActivityLog(null);
   const approvals = new Approvals();
   const tokens = new TokenStore(path.join(config.stateDir, "tokens.json"));
+  const settings = new Settings(null);
+  // most tests are about what happens once changes are allowed; the switch has its own tests
+  void settings.setAllowChanges(opts.allowChanges ?? true);
   const token: TokenRecord = {
     id: "11111111-1111-4111-8111-111111111111",
     name: "Test agent",
@@ -197,6 +202,7 @@ export function makeWorld(opts: { scopes?: Scope[]; confirm?: boolean; handlers?
     activity,
     approvals,
     tokens,
+    settings,
     actionLimiter: new RateLimiter(10, 60 * 60_000),
     approvalTimeoutMs: config.approvalTimeoutMs,
     logger: silentLogger,
@@ -204,7 +210,7 @@ export function makeWorld(opts: { scopes?: Scope[]; confirm?: boolean; handlers?
   };
   const procedures = () => wamps.flatMap((w) => w.calls.map((c) => c.procedure.replace(".dappmanager.dnp.dappnode.eth", "")));
   const callsOf = (name: string) => wamps.flatMap((w) => w.calls.filter((c) => c.procedure === `${name}.dappmanager.dnp.dappnode.eth`));
-  return { config, box, activity, approvals, tokens, token, ctx, wamps, procedures, callsOf, fetchCalls };
+  return { config, box, activity, approvals, tokens, settings, token, ctx, wamps, procedures, callsOf, fetchCalls };
 }
 
 // ---- the HTTP side (page, its API, /mcp) ----
@@ -216,11 +222,13 @@ export const TEST_SCRYPT_N = 1024;
 export const GOOD_PIN = "482915";
 
 /** The page app and the agent-only app on random ports, with one key made directly in the store. */
-export async function startHttp(scopes: Scope[] = ["read"], limits: Limits = defaultLimits(), pinOpts: PinOptions = {}, fetchImpl?: typeof fetch) {
-  const w = makeWorld();
+export async function startHttp(scopes: Scope[] = ["read"], limits: Limits = defaultLimits(), pinOpts: PinOptions = {}, fetchImpl?: typeof fetch, opts: { allowChanges?: boolean; lookup?: (h: string) => Promise<string[]> } = {}) {
+  const w = makeWorld({ allowChanges: opts.allowChanges ?? true });
   await w.tokens.load();
   const pin = new PinGuard(path.join(w.config.stateDir, "pin.json"), { scryptN: TEST_SCRYPT_N, ...pinOpts });
   await pin.load();
+  const fetchFn = fetchImpl ?? ((async () => new Response("no", { status: 404 })) as typeof fetch);
+  const oauth = new OAuthServer({ file: path.join(w.config.stateDir, "oauth.json"), tokens: w.tokens, activity: w.activity, logger: silentLogger, fetch: fetchFn, lookup: opts.lookup ?? (async () => ["93.184.215.14"]) });
   const deps: AppDeps = {
     config: w.config,
     logger: silentLogger,
@@ -229,7 +237,9 @@ export async function startHttp(scopes: Scope[] = ["read"], limits: Limits = def
     activity: w.activity,
     approvals: w.approvals,
     pin,
-    fetch: fetchImpl ?? ((async () => new Response("no", { status: 404 })) as typeof fetch),
+    settings: w.settings,
+    oauth,
+    fetch: fetchFn,
     httpsInfo: () => ({ on: false, validTo: null }),
   };
   const listen = async (app: http.RequestListener) => {
@@ -240,8 +250,11 @@ export async function startHttp(scopes: Scope[] = ["read"], limits: Limits = def
   };
   const main = await listen(createApp(deps, limits));
   const agent = await listen(createAgentApp(deps, limits));
+  // the sign-in (OAuth) addresses of the two listeners, as the box would have them
+  w.config.localBase = main;
+  w.config.agentBase = agent;
   const { token } = await w.tokens.create({ name: "SDK client", client: "other", scopes, confirmActions: false });
-  return { w, main, agent, token, pin, deps };
+  return { w, main, agent, token, pin, deps, oauth };
 }
 
 /** Headers the page sends on every change. */

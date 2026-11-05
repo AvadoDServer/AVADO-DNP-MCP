@@ -1,6 +1,6 @@
 {
   "name": "avado-ai-connect",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "AVADO AI Connect: an MCP server on the box with scoped, revocable tokens for the owner's own AI agents",
   "license": "GPL-3.0",
@@ -16,13 +16,16 @@
     "start": "node dist/server.js"
   },
   "devDependencies": {
+    "@modelcontextprotocol/client": "2.4.0",
     "@types/node": "22.20.5",
     "@types/semver": "7.8.0",
-    "typescript": "5.9.3"
+    "typescript": "7.0.2"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "1.32.2",
+    "@modelcontextprotocol/node": "2.1.2",
+    "@modelcontextprotocol/server": "2.4.0",
     "semver": "7.8.6",
+    "yaml": "2.9.1",
     "zod": "4.6.7"
   }
 }

@@ -426,8 +426,11 @@ export class Box {
     });
   }
 
-  /** Starts the install and waits up to installWaitMs for it. */
-  async install(entry: StoreApp, kind: "install" | "update"): Promise<Job> {
+  /**
+   * Starts the install and waits up to installWaitMs for it. When it finishes later, onLateFinish
+   * hears about it (so the activity list can say how it ended).
+   */
+  async install(entry: StoreApp, kind: "install" | "update", onLateFinish?: (job: Job) => void): Promise<Job> {
     assertActionAllowed(entry.name, entry.core, kind);
     if (this.runningJob()) throw new BoxError(`Another install is still running (${this.runningJob()!.app}).`, "refused");
     const job: Job = {
@@ -442,21 +445,28 @@ export class Box {
     };
     this.jobs.set(job.id, job);
     if (this.jobs.size > 50) this.jobs.delete([...this.jobs.keys()][0]!);
+    let answered = false;
+    const late = () => {
+      if (answered && onLateFinish) onLateFinish({ ...job });
+    };
     const run = this.withWamp((w) => installPackage(w, entry.name, entry.manifestHash, 60 * 60_000)).then(
       () => {
         job.state = "done";
         job.message = `${entry.title} ${entry.version} is ${kind === "install" ? "installed" : "updated"}.`;
         job.finishedAt = new Date(this.deps.now()).toISOString();
+        late();
       },
       (e: unknown) => {
         job.state = "failed";
         job.message = `${kind === "install" ? "Installing" : "Updating"} ${entry.title} did not work: ${errorMessage(e)}`;
         job.finishedAt = new Date(this.deps.now()).toISOString();
+        late();
       },
     );
     let timer: ReturnType<typeof setTimeout> | undefined;
     await Promise.race([run, new Promise((r) => (timer = setTimeout(r, this.config.installWaitMs)))]);
     clearTimeout(timer);
+    answered = true;
     return { ...job };
   }
 
