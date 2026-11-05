@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="referrer" content="no-referrer" />
+    <title>Approve on your AVADO</title>
+    <link rel="icon" href="favicon.png" />
+    <link rel="stylesheet" href="theme.css" />
+    <link rel="stylesheet" href="base.css" />
+    <link rel="stylesheet" href="style.css" />
+    <script src="connect.js" defer></script>
+  </head>
+  <body>
+    <main class="shell">
+      <header class="top">
+        <span class="brand">AVADO <strong>AI Connect</strong></span>
+      </header>
+
+      <section class="card" id="wait" aria-live="polite">
+        <h1>Approve on your AVADO</h1>
+        <p class="lead" id="who">Your app wants to connect to your AVADO.</p>
+        <p class="code-big" id="code" aria-label="Code"></p>
+        <ol class="steps">
+          <li>
+            On a phone or computer connected to your AVADO, open AI Connect:
+            <a class="button" id="open" href="https://mcp.my.ava.do/" target="_blank" rel="noopener">Open AI Connect</a>
+            <span class="muted small">(or open AI Connect in the AVADO Admin)</span>
+          </li>
+          <li>Check that it shows the same code, and press <strong>Allow</strong>.</li>
+        </ol>
+        <p class="muted small" id="status">This page goes on by itself.</p>
+      </section>
+
+      <section class="card" id="done" hidden aria-live="polite">
+        <h1 id="done-title">Connected</h1>
+        <p id="done-text"></p>
+        <p><a class="button" id="back" href="#">Go back</a></p>
+      </section>
+    </main>
+  </body>
+</html>
