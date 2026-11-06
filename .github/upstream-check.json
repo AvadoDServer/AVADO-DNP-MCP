@@ -1,0 +1,21 @@
+{
+  "title": "AVADO MCP",
+  "components": [
+    {
+      "name": "Node.js 22 (base image)",
+      "github": "nodejs/node",
+      "tag": "^v(22\\.\\d+\\.\\d+)$",
+      "notes": "https://github.com/nodejs/node/releases/tag/v{version}",
+      "caution": "MCP is AVADO's own code: this keeps its Node.js 22 LTS base images patched. Moving to a new Node major is a manual change.",
+      "images": [
+        { "var": "full", "ref": "node:{version}-bookworm" },
+        { "var": "slim", "ref": "node:{version}-bookworm-slim" }
+      ],
+      "pins": [
+        { "file": "build/Dockerfile", "text": "ARG NODE_IMAGE=node:{version}-bookworm@sha256:{full}" },
+        { "file": "build/Dockerfile", "text": "ARG NODE_SLIM_IMAGE=node:{version}-bookworm-slim@sha256:{slim}" },
+        { "file": "dappnode_package.json", "text": "\"upstream\": \"node v{version}\"" }
+      ]
+    }
+  ]
+}
