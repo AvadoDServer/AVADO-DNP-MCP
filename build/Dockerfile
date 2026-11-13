@@ -9,8 +9,8 @@
 # with `docker buildx imagetools inspect node:<tag>` (the "Digest:" line).
 # Node 22.23.4 (security release of 2026-10-20), checked 2026-11-04. AVADO-DNP-Care
 # and AVADO-DNP-Rocketpool still pin 22.23.2 until their own bump.
-ARG NODE_IMAGE=node:22.23.4-bookworm@sha256:18a6d90fd60542269850c80ca03b29b1d9b14d6b221ac7ee8e35b0d33ef904bd
-ARG NODE_SLIM_IMAGE=node:22.23.4-bookworm-slim@sha256:4b150b48b4116e2a22f2c39cc27025fbf4f153e2078fd3b14d159fdb5c7279da
+ARG NODE_IMAGE=node:22.23.5-bookworm@sha256:e13726ca604184d7a91fcacab1fc09eefd642dc28e79ac34e85540dd93b78cfb
+ARG NODE_SLIM_IMAGE=node:22.23.5-bookworm-slim@sha256:e9f565d32859f0cbfb52125eafe8be39390f24dac302dc3cdf566e8ba3ab21ee
 
 ########## Service: install, type-check, test, build
 FROM --platform=linux/amd64 ${NODE_IMAGE} AS service
